@@ -137,6 +137,60 @@ export class DatabasesService {
     return { id, deleted: true };
   }
 
+  async createView(
+    databaseId: string,
+    data: { name: string; type: string; config?: Record<string, unknown> },
+  ): Promise<DatabaseView> {
+    await this.ensureDatabase(databaseId);
+    const position = await this.nextViewPosition(databaseId);
+    const [view] = await this.db
+      .insert(databaseViews)
+      .values({
+        databaseId,
+        name: data.name,
+        type: data.type,
+        config: data.config ?? null,
+        position,
+      })
+      .returning();
+    return view;
+  }
+
+  async updateView(
+    id: string,
+    data: { name?: string; config?: Record<string, unknown> },
+  ): Promise<DatabaseView> {
+    await this.ensureView(id);
+    const [view] = await this.db
+      .update(databaseViews)
+      .set({ ...data })
+      .where(eq(databaseViews.id, id))
+      .returning();
+    return view;
+  }
+
+  async deleteView(id: string): Promise<{ id: string; deleted: boolean }> {
+    await this.ensureView(id);
+    await this.db.delete(databaseViews).where(eq(databaseViews.id, id));
+    return { id, deleted: true };
+  }
+
+  private async ensureView(id: string): Promise<void> {
+    const [view] = await this.db
+      .select()
+      .from(databaseViews)
+      .where(eq(databaseViews.id, id));
+    if (!view) throw new NotFoundException(`View ${id} not found`);
+  }
+
+  private async nextViewPosition(databaseId: string): Promise<number> {
+    const rows = await this.db
+      .select({ max: sql<number>`coalesce(max(${databaseViews.position}), -1)` })
+      .from(databaseViews)
+      .where(eq(databaseViews.databaseId, databaseId));
+    return rows[0].max + 1;
+  }
+
   private async ensureDatabase(id: string): Promise<void> {
     const [db] = await this.db.select().from(databases).where(eq(databases.id, id));
     if (!db) throw new NotFoundException(`Database ${id} not found`);

@@ -5,6 +5,7 @@ import type {
   DatabaseAggregate,
   DatabaseProperty,
   DatabaseRow,
+  DatabaseView,
   Page,
   PageType,
   PropertyType,
@@ -99,10 +100,10 @@ export const api = {
     }),
   deleteProperty: (id: string) =>
     request<{ id: string; deleted: boolean }>(`/database-properties/${id}`, { method: 'DELETE' }),
-  createRow: (databaseId: string) =>
+  createRow: (databaseId: string, values: Record<string, unknown> = {}) =>
     request<DatabaseRow>(`/databases/${databaseId}/rows`, {
       method: 'POST',
-      body: JSON.stringify({ values: {} }),
+      body: JSON.stringify({ values }),
     }),
   updateRow: (id: string, values: Record<string, unknown>) =>
     request<DatabaseRow>(`/database-rows/${id}`, {
@@ -111,6 +112,18 @@ export const api = {
     }),
   deleteRow: (id: string) =>
     request<{ id: string; deleted: boolean }>(`/database-rows/${id}`, { method: 'DELETE' }),
+  createView: (databaseId: string, body: { name: string; type: string; config?: Record<string, unknown> }) =>
+    request<DatabaseView>(`/databases/${databaseId}/views`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateView: (id: string, body: { name?: string; config?: Record<string, unknown> }) =>
+    request<DatabaseView>(`/database-views/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteView: (id: string) =>
+    request<{ id: string; deleted: boolean }>(`/database-views/${id}`, { method: 'DELETE' }),
 
   search: (q: string) => request<SearchHit[]>(`/search?q=${encodeURIComponent(q)}`),
   exportWorkspace: () => request<Record<string, unknown>>('/export/json'),

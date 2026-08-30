@@ -13,10 +13,12 @@ import {
   CreatePropertyDto,
   createPropertySchema,
   createRowSchema,
+  createViewSchema,
   UpdatePropertyDto,
   updatePropertySchema,
   UpdateRowDto,
   updateRowSchema,
+  updateViewSchema,
 } from './databases.schema';
 import { DatabasesService } from './databases.service';
 
@@ -69,5 +71,33 @@ export class DatabasesController {
   @Delete('database-rows/:id')
   deleteRow(@Param('id', ParseUUIDPipe) id: string) {
     return this.databasesService.deleteRow(id);
+  }
+
+  @Post('databases/:id/views')
+  createView(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(createViewSchema)) body: {
+      name: string;
+      type: string;
+      config?: Record<string, unknown>;
+    },
+  ) {
+    return this.databasesService.createView(id, body);
+  }
+
+  @Patch('database-views/:id')
+  updateView(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(updateViewSchema)) body: {
+      name?: string;
+      config?: Record<string, unknown>;
+    },
+  ) {
+    return this.databasesService.updateView(id, body);
+  }
+
+  @Delete('database-views/:id')
+  deleteView(@Param('id', ParseUUIDPipe) id: string) {
+    return this.databasesService.deleteView(id);
   }
 }

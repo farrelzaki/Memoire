@@ -5,155 +5,16 @@ import { useState } from 'react';
 import { api } from '@/lib/api';
 import type { DatabaseProperty, DatabaseRow, PropertyType } from '@/lib/types';
 import { applyFilter, applySort, type Filter, type Sort } from './database.lib';
+import { BoardView, CalendarView, GalleryView, TableView } from './database-views';
 
-function Cell({
-  property,
-  value,
-  onCommit,
-}: {
-  property: DatabaseProperty;
-  value: unknown;
-  onCommit: (value: unknown) => void;
-}) {
-  const inputCls = 'w-full bg-transparent px-2 py-1 text-sm outline-none';
-
-  switch (property.type) {
-    case 'checkbox':
-      return (
-        <input
-          type="checkbox"
-          checked={Boolean(value)}
-          onChange={(e) => onCommit(e.target.checked)}
-          className="h-4 w-4"
-        />
-      );
-    case 'number':
-      return (
-        <input
-          type="number"
-          defaultValue={typeof value === 'number' ? value : ''}
-          onBlur={(e) => onCommit(e.target.value === '' ? null : Number(e.target.value))}
-          className={inputCls}
-        />
-      );
-    case 'date':
-      return (
-        <input
-          type="date"
-          defaultValue={typeof value === 'string' ? value : ''}
-          onBlur={(e) => onCommit(e.target.value || null)}
-          className={inputCls}
-        />
-      );
-    case 'select': {
-      const options = Array.isArray(property.config?.options)
-        ? (property.config.options as string[])
-        : [];
-      const current = typeof value === 'string' ? value : '';
-      if (options.length === 0) {
-        return (
-          <input
-            type="text"
-            defaultValue={current}
-            onBlur={(e) => onCommit(e.target.value)}
-            className={inputCls}
-          />
-        );
-      }
-      return (
-        <select
-          value={current}
-          onChange={(e) => onCommit(e.target.value)}
-          className={inputCls}
-        >
-          <option value="">—</option>
-          {options.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-      );
-    }
-    default:
-      return (
-        <input
-          type={property.type === 'url' ? 'url' : 'text'}
-          defaultValue={typeof value === 'string' ? value : ''}
-          onBlur={(e) => onCommit(e.target.value)}
-          className={inputCls}
-        />
-      );
-  }
-}
-
-function AddColumnForm({
-  onAdd,
-  onCancel,
-}: {
-  onAdd: (input: { name: string; type: PropertyType; config?: Record<string, unknown> }) => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState('');
-  const [type, setType] = useState<PropertyType>('text');
-  const [options, setOptions] = useState('');
-
-  const submit = () => {
-    if (!name.trim()) return;
-    const config =
-      type === 'select'
-        ? { options: options.split(',').map((s) => s.trim()).filter(Boolean) }
-        : undefined;
-    onAdd({ name: name.trim(), type, config });
-  };
-
-  return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-zinc-200 p-2">
-      <input
-        autoFocus
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && submit()}
-        placeholder="Column name"
-        className="rounded border border-zinc-200 px-2 py-1 text-sm outline-none focus:border-zinc-400"
-      />
-      <select
-        value={type}
-        onChange={(e) => setType(e.target.value as PropertyType)}
-        className="rounded border border-zinc-200 px-2 py-1 text-sm"
-      >
-        {(['title', 'text', 'number', 'select', 'checkbox', 'date', 'url'] as const).map((t) => (
-          <option key={t} value={t}>
-            {t}
-          </option>
-        ))}
-      </select>
-      {type === 'select' && (
-        <input
-          value={options}
-          onChange={(e) => setOptions(e.target.value)}
-          placeholder="Option1, Option2"
-          className="rounded border border-zinc-200 px-2 py-1 text-sm outline-none"
-        />
-      )}
-      <button
-        onClick={submit}
-        className="rounded bg-zinc-900 px-2 py-1 text-sm text-white hover:bg-zinc-700"
-      >
-        Add
-      </button>
-      <button onClick={onCancel} className="text-sm text-zinc-400 hover:text-zinc-700">
-        Cancel
-      </button>
-    </div>
-  );
-}
+type ViewType = 'table' | 'board' | 'calendar' | 'gallery';
 
 export function DatabaseEditor({ pageId }: { pageId: string }) {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<Filter | null>(null);
   const [sort, setSort] = useState<Sort | null>(null);
-  const [addingColumn, setAddingColumn] = useState(false);
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  const [addingView, setAddingView] = useState(false);
 
   const { data: agg, isLoading } = useQuery({
     queryKey: ['database', pageId],
@@ -169,7 +30,7 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
   });
 
   const createRow = useMutation({
-    mutationFn: () => api.createRow(agg!.database.id),
+    mutationFn: (values?: Record<string, unknown>) => api.createRow(agg!.database.id, values),
     onSuccess: invalidate,
   });
 
@@ -179,11 +40,28 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
     onSuccess: invalidate,
   });
 
+  const deleteRow = useMutation({
+    mutationFn: (id: string) => api.deleteRow(id),
+    onSuccess: invalidate,
+  });
+
+  const createView = useMutation({
+    mutationFn: (input: { name: string; type: string; config?: Record<string, unknown> }) =>
+      api.createView(agg!.database.id, input),
+    onSuccess: invalidate,
+  });
+
+  const deleteView = useMutation({
+    mutationFn: (id: string) => api.deleteView(id),
+    onSuccess: invalidate,
+  });
+
   if (isLoading || !agg) {
-    return <div className="p-10 text-sm text-zinc-400">Loading…</div>;
+    return <div className="p-10 text-sm text-zinc-400 dark:text-zinc-500">Loading…</div>;
   }
 
-  const { properties, rows } = agg;
+  const { properties, rows, views } = agg;
+  const activeView = views.find((v) => v.id === activeViewId) ?? views[0];
   const filtered = filter ? applyFilter(rows, filter) : rows;
   const sorted = sort ? applySort(filtered, sort) : filtered;
 
@@ -200,6 +78,62 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
     });
   };
 
+  const addView = (type: ViewType) => {
+    let config: Record<string, unknown> | undefined;
+    if (type === 'board') {
+      const select = properties.find((p) => p.type === 'select');
+      config = select ? { groupBy: select.id } : {};
+    } else if (type === 'calendar') {
+      const date = properties.find((p) => p.type === 'date');
+      config = date ? { dateProperty: date.id } : {};
+    }
+    createView.mutate(
+      { name: type.charAt(0).toUpperCase() + type.slice(1), type, config },
+      { onSuccess: (view) => setActiveViewId(view.id) },
+    );
+    setAddingView(false);
+  };
+
+  let content: React.ReactNode;
+  if (activeView.type === 'table') {
+    content = (
+      <TableView
+        properties={properties}
+        rows={sorted}
+        sort={sort}
+        toggleSort={toggleSort}
+        commitCell={commitCell}
+        deleteRow={(id) => deleteRow.mutate(id)}
+        createRow={() => createRow.mutate()}
+        createProperty={(input) => createProperty.mutate(input)}
+      />
+    );
+  } else if (activeView.type === 'board') {
+    const selectProps = properties.filter((p) => p.type === 'select');
+    const groupBy = properties.find((p) => p.id === activeView.config?.groupBy) ?? selectProps[0];
+    content = groupBy ? (
+      <BoardView
+        properties={properties}
+        rows={filtered}
+        groupBy={groupBy}
+        commitCell={commitCell}
+        createRow={(values) => createRow.mutate(values)}
+      />
+    ) : (
+      <p className="text-zinc-400 dark:text-zinc-500">Add a “select” property to use the board view.</p>
+    );
+  } else if (activeView.type === 'calendar') {
+    const dateProps = properties.filter((p) => p.type === 'date');
+    const dateProperty = properties.find((p) => p.id === activeView.config?.dateProperty) ?? dateProps[0];
+    content = dateProperty ? (
+      <CalendarView properties={properties} rows={filtered} dateProperty={dateProperty} />
+    ) : (
+      <p className="text-zinc-400 dark:text-zinc-500">Add a “date” property to use the calendar view.</p>
+    );
+  } else {
+    content = <GalleryView properties={properties} rows={filtered} createRow={() => createRow.mutate()} />;
+  }
+
   return (
     <div className="mt-6 text-sm">
       {/* Filter bar */}
@@ -209,7 +143,7 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
           onChange={(e) =>
             setFilter(e.target.value ? { propertyId: e.target.value, operator: 'contains', value: '' } : null)
           }
-          className="rounded border border-zinc-200 px-2 py-1 text-sm"
+          className="rounded border border-zinc-200 bg-transparent px-2 py-1 text-sm dark:border-zinc-700 dark:text-zinc-100"
         >
           <option value="">No filter</option>
           {properties.map((p) => (
@@ -223,7 +157,7 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
             <select
               value={filter.operator}
               onChange={(e) => setFilter({ ...filter, operator: e.target.value as Filter['operator'] })}
-              className="rounded border border-zinc-200 px-2 py-1 text-sm"
+              className="rounded border border-zinc-200 bg-transparent px-2 py-1 text-sm dark:border-zinc-700 dark:text-zinc-100"
             >
               <option value="contains">contains</option>
               <option value="equals">equals</option>
@@ -231,100 +165,72 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
               <option value="is_empty">is empty</option>
               <option value="is_not_empty">is not empty</option>
             </select>
-            {filter.operator === 'contains' && (
-              <input
-                value={String(filter.value ?? '')}
-                onChange={(e) => setFilter({ ...filter, value: e.target.value })}
-                placeholder="Filter…"
-                className="rounded border border-zinc-200 px-2 py-1 text-sm outline-none"
-              />
-            )}
-            {filter.operator === 'equals' || filter.operator === 'not_equals' ? (
+            {filter.operator !== 'is_empty' && filter.operator !== 'is_not_empty' && (
               <input
                 value={String(filter.value ?? '')}
                 onChange={(e) => setFilter({ ...filter, value: e.target.value })}
                 placeholder="Value"
-                className="rounded border border-zinc-200 px-2 py-1 text-sm outline-none"
+                className="rounded border border-zinc-200 bg-transparent px-2 py-1 text-sm outline-none dark:border-zinc-700 dark:text-zinc-100"
               />
-            ) : null}
+            )}
           </>
         )}
         {filter && (
-          <button onClick={() => setFilter(null)} className="text-xs text-zinc-400 hover:text-zinc-700">
+          <button onClick={() => setFilter(null)} className="text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200">
             Clear
           </button>
         )}
       </div>
 
-      <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
-              {properties.map((p) => (
-                <th key={p.id} className="border-r border-zinc-200 px-2 py-1.5 font-medium dark:border-zinc-800">
-                  <button onClick={() => toggleSort(p.id)} className="flex items-center gap-1 text-zinc-700 hover:text-zinc-900">
-                    {p.name}
-                    {sort?.propertyId === p.id ? (sort.direction === 'asc' ? '↑' : '↓') : ''}
-                  </button>
-                </th>
-              ))}
-              <th className="w-10 px-2 py-1.5" />
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((row) => (
-              <tr key={row.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
-                {properties.map((p) => (
-                  <td key={p.id} className="border-r border-zinc-100 px-1 py-0 dark:border-zinc-800">
-                    <Cell
-                      property={p}
-                      value={row.values?.[p.id]}
-                      onCommit={(value) => commitCell(row, p, value)}
-                    />
-                  </td>
-                ))}
-                <td className="px-2 py-1 text-right">
-                  <button
-                    onClick={() => api.deleteRow(row.id).then(invalidate)}
-                    className="text-xs text-zinc-300 hover:text-red-500"
-                    title="Delete row"
-                  >
-                    ×
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {sorted.length === 0 && (
-              <tr>
-                <td colSpan={properties.length + 1} className="px-3 py-6 text-center text-zinc-400">
-                  No rows yet.
-                </td>
-              </tr>
+      {/* View switcher */}
+      <div className="mb-2 flex items-center gap-1 border-b border-zinc-200 dark:border-zinc-800">
+        {views.map((view) => (
+          <div key={view.id} className="group flex items-center">
+            <button
+              onClick={() => setActiveViewId(view.id)}
+              className={`px-2 py-1.5 text-sm ${
+                view.id === activeView.id
+                  ? 'border-b-2 border-zinc-900 font-medium text-zinc-900 dark:border-zinc-100 dark:text-zinc-100'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200'
+              }`}
+            >
+              {view.name}
+            </button>
+            {views.length > 1 && view.id === activeView.id && (
+              <button
+                onClick={() => deleteView.mutate(view.id)}
+                className="px-1 text-xs text-zinc-300 opacity-0 hover:text-red-500 group-hover:opacity-100"
+                title="Delete view"
+              >
+                ×
+              </button>
             )}
-          </tbody>
-        </table>
+          </div>
+        ))}
+        <div className="relative ml-1">
+          <button
+            onClick={() => setAddingView((v) => !v)}
+            className="px-2 py-1.5 text-sm text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+          >
+            +
+          </button>
+          {addingView && (
+            <div className="absolute left-0 top-8 z-50 w-32 rounded border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+              {(['table', 'board', 'calendar', 'gallery'] as const).map((type) => (
+                <button
+                  key={type}
+                  onClick={() => addView(type)}
+                  className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  {type.charAt(0).toUpperCase() + type.slice(1)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="mt-2">
-        {addingColumn ? (
-          <AddColumnForm
-            onAdd={(input) => {
-              createProperty.mutate(input);
-              setAddingColumn(false);
-            }}
-            onCancel={() => setAddingColumn(false)}
-          />
-        ) : (
-          <div className="flex items-center gap-3">
-            <button onClick={() => createRow.mutate()} className="text-zinc-500 hover:text-zinc-900">
-              + New row
-            </button>
-            <button onClick={() => setAddingColumn(true)} className="text-zinc-500 hover:text-zinc-900">
-              + New column
-            </button>
-          </div>
-        )}
-      </div>
+      {content}
     </div>
   );
 }
