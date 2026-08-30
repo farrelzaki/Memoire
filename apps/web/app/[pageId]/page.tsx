@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { DocumentEditor } from '@/features/editor/document-editor';
 import { api, type UpdatePageInput } from '@/lib/api';
 
 export default function PageDetail() {
@@ -19,7 +20,7 @@ export default function PageDetail() {
   const [title, setTitle] = useState('');
   useEffect(() => {
     if (page) setTitle(page.title);
-  }, [page?.title, page]);
+  }, [page]);
 
   const updatePage = useMutation({
     mutationFn: (body: UpdatePageInput) => api.updatePage(pageId, body),
@@ -52,9 +53,16 @@ export default function PageDetail() {
         placeholder="Untitled"
         className="w-full text-3xl font-bold text-zinc-900 outline-none placeholder:text-zinc-300"
       />
-      <p className="mt-10 text-sm text-zinc-400">
-        Block content (Tiptap editor) arrives in Sprint 3.
-      </p>
+
+      <div className="mt-6">
+        {page.type === 'document' ? (
+          <DocumentEditor pageId={pageId} />
+        ) : (
+          <p className="text-sm text-zinc-400">
+            “{page.type}” pages are not editable yet.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

@@ -18,3 +18,26 @@ export interface Page {
   createdAt: string;
   updatedAt: string;
 }
+
+/** Minimal Tiptap/ProseMirror JSON node shape (self-contained). */
+export interface TiptapNode {
+  type?: string;
+  content?: TiptapNode[];
+  text?: string;
+  attrs?: Record<string, unknown>;
+  marks?: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+/** Mirrors the backend `blocks` row (§10.4). */
+export interface Block {
+  id: string;
+  pageId: string;
+  parentBlockId: string | null;
+  type: string;
+  position: number;
+  content: TiptapNode | null;
+  properties: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}

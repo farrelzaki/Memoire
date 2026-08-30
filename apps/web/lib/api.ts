@@ -1,4 +1,5 @@
-import type { Page, PageType } from './types';
+import type { BlockPayload } from './blocks';
+import type { Block, Page, PageType } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
 
@@ -48,4 +49,11 @@ export const api = {
     id: string,
     body: { parentPageId?: string | null; position?: number },
   ) => request<Page>(`/pages/${id}/move`, { method: 'POST', body: JSON.stringify(body) }),
+
+  listBlocks: (pageId: string) => request<Block[]>(`/pages/${pageId}/blocks`),
+  replaceBlocks: (pageId: string, blocks: BlockPayload[]) =>
+    request<Block[]>(`/pages/${pageId}/blocks`, {
+      method: 'PUT',
+      body: JSON.stringify({ blocks }),
+    }),
 };
