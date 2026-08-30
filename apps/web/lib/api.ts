@@ -1,0 +1,51 @@
+import type { Page, PageType } from './types';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+  });
+
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      detail = body.error?.message ?? '';
+    } catch {
+      // non-JSON error body — ignore
+    }
+    throw new Error(detail || `Request failed (${res.status})`);
+  }
+
+  return res.json() as Promise<T>;
+}
+
+export interface CreatePageInput {
+  title?: string;
+  parentPageId?: string | null;
+  type?: PageType;
+}
+
+export interface UpdatePageInput {
+  title?: string;
+  isFavorite?: boolean;
+}
+
+export const api = {
+  listPages: () => request<Page[]>('/pages'),
+  getPage: (id: string) => request<Page>(`/pages/${id}`),
+  createPage: (body: CreatePageInput) =>
+    request<Page>('/pages', { method: 'POST', body: JSON.stringify(body) }),
+  updatePage: (id: string, body: UpdatePageInput) =>
+    request<Page>(`/pages/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  archivePage: (id: string) =>
+    request<Page>(`/pages/${id}/archive`, { method: 'POST' }),
+  restorePage: (id: string) =>
+    request<Page>(`/pages/${id}/restore`, { method: 'POST' }),
+  movePage: (
+    id: string,
+    body: { parentPageId?: string | null; position?: number },
+  ) => request<Page>(`/pages/${id}/move`, { method: 'POST', body: JSON.stringify(body) }),
+};
