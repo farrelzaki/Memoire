@@ -54,3 +54,58 @@ export interface Attachment {
   metadata: Record<string, unknown> | null;
   createdAt: string;
 }
+
+export type PropertyType =
+  | 'title'
+  | 'text'
+  | 'number'
+  | 'select'
+  | 'checkbox'
+  | 'date'
+  | 'url';
+
+/** Mirrors the backend `databases` row (§10.5). */
+export interface Database {
+  id: string;
+  pageId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Mirrors `database_properties` (§10.6). */
+export interface DatabaseProperty {
+  id: string;
+  databaseId: string;
+  name: string;
+  type: PropertyType;
+  config: Record<string, unknown> | null;
+  position: number;
+}
+
+/** Mirrors `database_rows` (§10.7). */
+export interface DatabaseRow {
+  id: string;
+  databaseId: string;
+  pageId: string | null;
+  values: Record<string, unknown> | null;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DatabaseAggregate {
+  database: Database;
+  properties: DatabaseProperty[];
+  rows: DatabaseRow[];
+  views: DatabaseView[];
+}
+
+export interface DatabaseView {
+  id: string;
+  databaseId: string;
+  name: string;
+  type: string;
+  config: Record<string, unknown> | null;
+  position: number;
+}

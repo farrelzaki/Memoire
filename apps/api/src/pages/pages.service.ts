@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { eq, isNull, sql } from 'drizzle-orm';
+import { DatabasesService } from '../databases/databases.service';
 import { DRIZZLE_DB, DrizzleDB } from '../db/drizzle.provider';
 import { Page, PageType, pages } from '../db/schema';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -29,6 +30,7 @@ export class PagesService {
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDB,
     private readonly workspacesService: WorkspacesService,
+    private readonly databasesService: DatabasesService,
   ) {}
 
   async create(data: CreatePageInput): Promise<Page> {
@@ -47,6 +49,13 @@ export class PagesService {
         position,
       })
       .returning();
+
+    // Content-type default content (§11A) — a database page needs its backing
+    // databases row + starter properties.
+    if (page.type === 'database') {
+      await this.databasesService.createDefault(page.id, page.title);
+    }
+
     return page;
   }
 

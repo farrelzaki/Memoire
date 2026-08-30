@@ -1,5 +1,14 @@
 import type { BlockPayload } from './blocks';
-import type { Attachment, Block, Page, PageType } from './types';
+import type {
+  Attachment,
+  Block,
+  DatabaseAggregate,
+  DatabaseProperty,
+  DatabaseRow,
+  Page,
+  PageType,
+  PropertyType,
+} from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
 
@@ -74,4 +83,31 @@ export const api = {
       },
     );
   },
+
+  getDatabase: (pageId: string) =>
+    request<DatabaseAggregate>(`/databases/by-page/${pageId}`),
+  createProperty: (databaseId: string, body: { name: string; type: PropertyType; config?: Record<string, unknown> }) =>
+    request<DatabaseProperty>(`/databases/${databaseId}/properties`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateProperty: (id: string, body: { name?: string; config?: Record<string, unknown> }) =>
+    request<DatabaseProperty>(`/database-properties/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteProperty: (id: string) =>
+    request<{ id: string; deleted: boolean }>(`/database-properties/${id}`, { method: 'DELETE' }),
+  createRow: (databaseId: string) =>
+    request<DatabaseRow>(`/databases/${databaseId}/rows`, {
+      method: 'POST',
+      body: JSON.stringify({ values: {} }),
+    }),
+  updateRow: (id: string, values: Record<string, unknown>) =>
+    request<DatabaseRow>(`/database-rows/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ values }),
+    }),
+  deleteRow: (id: string) =>
+    request<{ id: string; deleted: boolean }>(`/database-rows/${id}`, { method: 'DELETE' }),
 };

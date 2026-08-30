@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
+import { useState } from 'react';
 import { useCreatePage } from '@/hooks/use-create-page';
 import { api } from '@/lib/api';
 import { buildPageTree, type PageTreeNode } from '@/lib/pages';
@@ -48,6 +49,7 @@ function TrashRow({ page }: { page: Page }) {
 
 export function Sidebar() {
   const createPage = useCreatePage();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const { data: pages = [] } = useQuery({ queryKey: ['pages'], queryFn: api.listPages });
 
@@ -60,13 +62,37 @@ export function Sidebar() {
     <aside className="flex h-full w-64 flex-col gap-4 overflow-y-auto border-r border-zinc-200 bg-zinc-50 p-3">
       <div className="flex items-center justify-between">
         <span className="text-sm font-semibold text-zinc-900">Memoire</span>
-        <button
-          onClick={() => createPage.mutate({})}
-          className="rounded px-2 py-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900"
-          title="New page"
-        >
-          + New
-        </button>
+        <div className="relative">
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            className="rounded px-2 py-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900"
+            title="New page"
+          >
+            + New
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-8 z-50 w-40 rounded border border-zinc-200 bg-white p-1 shadow-lg">
+              <button
+                onClick={() => {
+                  createPage.mutate({});
+                  setMenuOpen(false);
+                }}
+                className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-700 hover:bg-zinc-100"
+              >
+                Page
+              </button>
+              <button
+                onClick={() => {
+                  createPage.mutate({ type: 'database' });
+                  setMenuOpen(false);
+                }}
+                className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-700 hover:bg-zinc-100"
+              >
+                Database
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {favorites.length > 0 && (
