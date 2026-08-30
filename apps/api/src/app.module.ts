@@ -4,6 +4,7 @@ import { APP_FILTER } from '@nestjs/core';
 import { AttachmentsModule } from './attachments/attachments.module';
 import { BlocksModule } from './blocks/blocks.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { WhiteboardModule } from './content-types/whiteboard/whiteboard.module';
 import { DatabasesModule } from './databases/databases.module';
 import { DrizzleModule } from './db/drizzle.module';
 import { ExportModule } from './export/export.module';
@@ -26,6 +27,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     AttachmentsModule,
     SearchModule,
     ExportModule,
+    WhiteboardModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
 })

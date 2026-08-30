@@ -2,6 +2,7 @@ import type { BlockPayload } from './blocks';
 import type {
   Attachment,
   Block,
+  CanvasData,
   DatabaseAggregate,
   DatabaseProperty,
   DatabaseRow,
@@ -127,4 +128,11 @@ export const api = {
 
   search: (q: string) => request<SearchHit[]>(`/search?q=${encodeURIComponent(q)}`),
   exportWorkspace: () => request<Record<string, unknown>>('/export/json'),
+
+  getCanvas: (pageId: string) => request<CanvasData>(`/pages/${pageId}/canvas`),
+  updateCanvas: (pageId: string, body: { elements?: unknown[]; viewport?: Record<string, unknown> }) =>
+    request<CanvasData>(`/pages/${pageId}/canvas`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
 };

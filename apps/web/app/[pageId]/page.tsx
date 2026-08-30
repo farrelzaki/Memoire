@@ -3,8 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { DatabaseEditor } from '@/features/database/database-editor';
-import { DocumentEditor } from '@/features/editor/document-editor';
+import { getContentType } from '@/features/content-types/registry';
 import { api, type UpdatePageInput } from '@/lib/api';
 
 export default function PageDetail() {
@@ -42,6 +41,8 @@ export default function PageDetail() {
     if (title !== page.title) updatePage.mutate({ title });
   };
 
+  const ContentRenderer = getContentType(page.type)?.renderer;
+
   return (
     <div className="mx-auto max-w-3xl px-8 py-12">
       <input
@@ -56,10 +57,8 @@ export default function PageDetail() {
       />
 
       <div className="mt-6">
-        {page.type === 'document' ? (
-          <DocumentEditor pageId={pageId} />
-        ) : page.type === 'database' ? (
-          <DatabaseEditor pageId={pageId} />
+        {ContentRenderer ? (
+          <ContentRenderer pageId={pageId} />
         ) : (
           <p className="text-sm text-zinc-400 dark:text-zinc-500">
             “{page.type}” pages are not editable yet.

@@ -116,3 +116,14 @@ export interface SearchHit {
   pageId: string;
   title: string;
 }
+
+/** Mirrors `page_canvases` (§10.11) — whiteboard/diagram content. */
+export interface CanvasData {
+  id: string;
+  pageId: string;
+  canvasKind: string;
+  elements: unknown[] | null;
+  viewport: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}

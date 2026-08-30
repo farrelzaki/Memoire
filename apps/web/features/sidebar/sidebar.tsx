@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useState } from 'react';
 import { useCreatePage } from '@/hooks/use-create-page';
+import { contentTypes } from '@/features/content-types/registry';
 import { api } from '@/lib/api';
 import { buildPageTree, type PageTreeNode } from '@/lib/pages';
 import type { Page } from '@/lib/types';
@@ -90,25 +91,21 @@ export function Sidebar() {
               + New
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-8 z-50 w-40 rounded border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-                <button
-                  onClick={() => {
-                    createPage.mutate({});
-                    setMenuOpen(false);
-                  }}
-                  className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                >
-                  Page
-                </button>
-                <button
-                  onClick={() => {
-                    createPage.mutate({ type: 'database' });
-                    setMenuOpen(false);
-                  }}
-                  className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                >
-                  Database
-                </button>
+              <div className="absolute right-0 top-8 z-50 w-44 rounded border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                {Object.values(contentTypes)
+                  .filter((ct) => ct.createInSidebar)
+                  .map((ct) => (
+                    <button
+                      key={ct.key}
+                      onClick={() => {
+                        createPage.mutate({ type: ct.key });
+                        setMenuOpen(false);
+                      }}
+                      className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    >
+                      {ct.icon} {ct.label}
+                    </button>
+                  ))}
               </div>
             )}
           </div>
