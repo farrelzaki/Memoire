@@ -1,0 +1,23 @@
+{
+  "name": "memoire",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.24.0",
+  "description": "Memoire — personal knowledge workspace (Notion-inspired, single-user)",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @memoire/web --filter @memoire/api run dev",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "test:watch": "pnpm -r run test:watch",
+    "db:migrate": "pnpm --filter @memoire/api run db:migrate",
+    "db:generate": "pnpm --filter @memoire/api run db:generate",
+    "db:studio": "pnpm --filter @memoire/api run db:studio",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

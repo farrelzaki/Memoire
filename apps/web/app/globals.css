@@ -1,0 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme tokens (light/dark) come in a later sprint (§34) — keep colors
+   on Tailwind defaults for now and migrate to CSS variables, not hardcoded
+   values, when the theme system lands. */
