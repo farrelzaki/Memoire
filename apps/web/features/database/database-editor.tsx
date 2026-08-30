@@ -256,12 +256,12 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
         )}
       </div>
 
-      <div className="overflow-x-auto rounded border border-zinc-200">
+      <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
         <table className="w-full border-collapse">
           <thead>
-            <tr className="border-b border-zinc-200 bg-zinc-50 text-left">
+            <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
               {properties.map((p) => (
-                <th key={p.id} className="border-r border-zinc-200 px-2 py-1.5 font-medium">
+                <th key={p.id} className="border-r border-zinc-200 px-2 py-1.5 font-medium dark:border-zinc-800">
                   <button onClick={() => toggleSort(p.id)} className="flex items-center gap-1 text-zinc-700 hover:text-zinc-900">
                     {p.name}
                     {sort?.propertyId === p.id ? (sort.direction === 'asc' ? '↑' : '↓') : ''}
@@ -273,9 +273,9 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
           </thead>
           <tbody>
             {sorted.map((row) => (
-              <tr key={row.id} className="border-b border-zinc-100 last:border-0">
+              <tr key={row.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
                 {properties.map((p) => (
-                  <td key={p.id} className="border-r border-zinc-100 px-1 py-0">
+                  <td key={p.id} className="border-r border-zinc-100 px-1 py-0 dark:border-zinc-800">
                     <Cell
                       property={p}
                       value={row.values?.[p.id]}

@@ -7,11 +7,11 @@ export default function Home() {
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8">
-      <h1 className="text-2xl font-semibold text-zinc-900">Memoire</h1>
-      <p className="text-sm text-zinc-500">Select a page, or create your first one.</p>
+      <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">Memoire</h1>
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">Select a page, or create your first one.</p>
       <button
         onClick={() => createPage.mutate({})}
-        className="mt-2 rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white hover:bg-zinc-700"
+        className="mt-2 rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
       >
         New page
       </button>

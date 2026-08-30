@@ -32,10 +32,10 @@ export default function PageDetail() {
   });
 
   if (isLoading) {
-    return <div className="p-10 text-sm text-zinc-400">Loading…</div>;
+    return <div className="p-10 text-sm text-zinc-400 dark:text-zinc-500">Loading…</div>;
   }
   if (isError || !page) {
-    return <div className="p-10 text-sm text-zinc-500">Page not found.</div>;
+    return <div className="p-10 text-sm text-zinc-500 dark:text-zinc-400">Page not found.</div>;
   }
 
   const save = () => {
@@ -52,7 +52,7 @@ export default function PageDetail() {
           if (e.key === 'Enter') e.currentTarget.blur();
         }}
         placeholder="Untitled"
-        className="w-full text-3xl font-bold text-zinc-900 outline-none placeholder:text-zinc-300"
+        className="w-full bg-transparent text-3xl font-bold text-zinc-900 outline-none placeholder:text-zinc-300 dark:text-zinc-100 dark:placeholder:text-zinc-600"
       />
 
       <div className="mt-6">
@@ -61,7 +61,7 @@ export default function PageDetail() {
         ) : page.type === 'database' ? (
           <DatabaseEditor pageId={pageId} />
         ) : (
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-zinc-400 dark:text-zinc-500">
             “{page.type}” pages are not editable yet.
           </p>
         )}

@@ -324,7 +324,7 @@ function SlashMenu({
 
   return (
     <div
-      className="fixed z-50 max-h-72 w-56 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg"
+      className="fixed z-50 max-h-72 w-56 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
       style={coords ? { top: coords.top + 20, left: coords.left } : { top: 0, left: 0 }}
     >
       {items.map((item, i) => (
@@ -334,7 +334,7 @@ function SlashMenu({
           onClick={() => onSelect(item.run)}
           onMouseEnter={() => setIndex(i)}
           className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm ${
-            i === index ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-600'
+            i === index ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100' : 'text-zinc-600 dark:text-zinc-300'
           }`}
         >
           <span>{item.title}</span>
@@ -376,7 +376,7 @@ function BlockHandle({
 
       {open && (
         <div
-          className="fixed z-50 w-44 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg"
+          className="fixed z-50 w-44 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
           style={{ top: handle.top - 20, left: handle.left - 24 }}
         >
           {items.slice(0, 5).map((item) => (
@@ -384,7 +384,7 @@ function BlockHandle({
               key={item.title}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => onTurnInto(item.run)}
-              className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-600 hover:bg-zinc-100"
+              className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               {item.title}
             </button>

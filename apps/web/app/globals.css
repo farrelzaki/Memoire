@@ -52,3 +52,9 @@
 .ProseMirror ul[data-type='taskList'] { list-style: none; padding-left: 0; }
 .ProseMirror ul[data-type='taskList'] li { display: flex; gap: 0.5rem; }
 .ProseMirror ul[data-type='taskList'] li > label { margin-top: 0.3rem; }
+
+/* Dark mode editor overrides (temporary hex pending the theme-token system). */
+.dark .ProseMirror p.is-editor-empty:first-child::before { color: #52525b; }
+.dark .ProseMirror blockquote { border-left-color: #3f3f46; color: #a1a1aa; }
+.dark .ProseMirror pre { background: #18181b; }
+.dark .ProseMirror hr { border-top-color: #3f3f46; }
