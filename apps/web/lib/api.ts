@@ -1,7 +1,12 @@
 import type { BlockPayload } from './blocks';
-import type { Block, Page, PageType } from './types';
+import type { Attachment, Block, Page, PageType } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
+
+/** URL the browser can load to stream an attachment's content through the API. */
+export function attachmentContentUrl(id: string): string {
+  return `${API_BASE}/attachments/${id}/content`;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -56,4 +61,17 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ blocks }),
     }),
+
+  // Multipart upload (no JSON Content-Type), so it bypasses the `request` helper.
+  uploadAttachment: (file: File, pageId: string): Promise<Attachment> => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('pageId', pageId);
+    return fetch(`${API_BASE}/attachments/upload`, { method: 'POST', body: form }).then(
+      async (res) => {
+        if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+        return res.json() as Promise<Attachment>;
+      },
+    );
+  },
 };

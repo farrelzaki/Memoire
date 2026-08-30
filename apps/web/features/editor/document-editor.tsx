@@ -8,8 +8,8 @@ import TaskList from '@tiptap/extension-task-list';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '@/lib/api';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { api, attachmentContentUrl } from '@/lib/api';
 import { blocksToDoc, docToBlocks, type TiptapDocument } from '@/lib/blocks';
 import type { Block } from '@/lib/types';
 
@@ -78,6 +78,19 @@ function EditorInstance({
   const [blockHandle, setBlockHandle] = useState<BlockHandleState | null>(null);
   const [blockMenuOpen, setBlockMenuOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadImage = useCallback(
+    async (file: File): Promise<string> => {
+      const attachment = await api.uploadAttachment(file, pageId);
+      return attachmentContentUrl(attachment.id);
+    },
+    [pageId],
+  );
+
+  const pickImage = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
 
   const editor = useEditor({
     extensions: [
@@ -88,6 +101,32 @@ function EditorInstance({
       Image.configure({ allowBase64: true }),
     ],
     content: blocksToDoc(initialBlocks) as unknown as Content,
+    editorProps: {
+      handleDrop(view, event) {
+        const file = Array.from(event.dataTransfer?.files ?? []).find((f) =>
+          f.type.startsWith('image/'),
+        );
+        if (!file) return false;
+        event.preventDefault();
+        void uploadImage(file).then((url) => {
+          const node = view.state.schema.nodes.image.create({ src: url });
+          view.dispatch(view.state.tr.replaceSelectionWith(node));
+        });
+        return true;
+      },
+      handlePaste(view, event) {
+        const file = Array.from(event.clipboardData?.files ?? []).find((f) =>
+          f.type.startsWith('image/'),
+        );
+        if (!file) return false;
+        event.preventDefault();
+        void uploadImage(file).then((url) => {
+          const node = view.state.schema.nodes.image.create({ src: url });
+          view.dispatch(view.state.tr.replaceSelectionWith(node));
+        });
+        return true;
+      },
+    },
     onUpdate: ({ editor }) => {
       setSaveState('saving');
       if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -128,14 +167,19 @@ function EditorInstance({
       { title: 'Divider', hint: '—', run: () => editor?.chain().focus().setHorizontalRule().run() },
       {
         title: 'Image',
-        hint: 'URL',
+        hint: 'Upload',
+        run: () => pickImage(),
+      },
+      {
+        title: 'Image URL',
+        hint: 'Link',
         run: () => {
           const url = window.prompt('Image URL');
           if (url) editor?.chain().focus().setImage({ src: url }).run();
         },
       },
     ],
-    [editor],
+    [editor, pickImage],
   );
 
   const filteredItems = slash
@@ -182,11 +226,30 @@ function EditorInstance({
     setBlockMenuOpen(false);
   }, [editor, blockHandle]);
 
+  const handleFilePick = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file) return;
+      const url = await uploadImage(file);
+      editor?.chain().focus().setImage({ src: url }).run();
+    },
+    [editor, uploadImage],
+  );
+
   if (!editor) return null;
 
   return (
     <div className="relative">
       <SaveStatus state={saveState} />
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFilePick}
+      />
 
       <EditorContent editor={editor} />
 

@@ -41,3 +41,16 @@ export interface Block {
   createdAt: string;
   updatedAt: string;
 }
+
+/** Mirrors the backend `attachments` row (§10.9). */
+export interface Attachment {
+  id: string;
+  pageId: string | null;
+  blockId: string | null;
+  filename: string;
+  mimeType: string;
+  size: number;
+  storageKey: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
