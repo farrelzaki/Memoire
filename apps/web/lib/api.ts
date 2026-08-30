@@ -8,6 +8,7 @@ import type {
   Page,
   PageType,
   PropertyType,
+  SearchHit,
 } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
@@ -110,4 +111,7 @@ export const api = {
     }),
   deleteRow: (id: string) =>
     request<{ id: string; deleted: boolean }>(`/database-rows/${id}`, { method: 'DELETE' }),
+
+  search: (q: string) => request<SearchHit[]>(`/search?q=${encodeURIComponent(q)}`),
+  exportWorkspace: () => request<Record<string, unknown>>('/export/json'),
 };

@@ -122,6 +122,10 @@ export function Sidebar() {
         </div>
       </div>
 
+      <Link href="/search" className={linkCls}>
+        Search
+      </Link>
+
       {favorites.length > 0 && (
         <section>
           <h2 className="px-2 pb-1 text-xs font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">

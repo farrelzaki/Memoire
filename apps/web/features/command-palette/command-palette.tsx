@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCreatePage } from '@/hooks/use-create-page';
 import { api } from '@/lib/api';
+import { downloadJson } from '@/lib/download';
 import { nextTheme } from '@/lib/theme';
 import { useCommandPaletteStore } from '@/stores/command-palette';
 import { useSidebarStore } from '@/stores/sidebar';
@@ -78,6 +79,17 @@ export function CommandPalette() {
         run: () => setTheme(nextTheme(theme)),
       },
       { id: 'toggle-sidebar', label: 'Toggle sidebar', run: () => toggleSidebar() },
+      {
+        id: 'export-json',
+        label: 'Export JSON',
+        hint: 'Backup',
+        run: () => {
+          setOpen(false);
+          void api.exportWorkspace().then((data) =>
+            downloadJson(`memoire-export-${new Date().toISOString().slice(0, 10)}.json`, data),
+          );
+        },
+      },
     ];
 
     const filteredActions = query

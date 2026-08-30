@@ -109,3 +109,10 @@ export interface DatabaseView {
   config: Record<string, unknown> | null;
   position: number;
 }
+
+/** A single search result from `GET /search` (§25). */
+export interface SearchHit {
+  type: 'page' | 'block' | 'database' | 'row';
+  pageId: string;
+  title: string;
+}

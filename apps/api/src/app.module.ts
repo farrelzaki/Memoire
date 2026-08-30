@@ -6,8 +6,10 @@ import { BlocksModule } from './blocks/blocks.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { DatabasesModule } from './databases/databases.module';
 import { DrizzleModule } from './db/drizzle.module';
+import { ExportModule } from './export/export.module';
 import { HealthModule } from './health/health.module';
 import { PagesModule } from './pages/pages.module';
+import { SearchModule } from './search/search.module';
 import { StorageModule } from './storage/storage.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 
@@ -22,6 +24,8 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     DatabasesModule,
     StorageModule,
     AttachmentsModule,
+    SearchModule,
+    ExportModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
 })
