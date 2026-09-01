@@ -1,0 +1,17 @@
+{
+  "name": "Memoire",
+  "short_name": "Memoire",
+  "description": "Personal knowledge workspace",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#18181b",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

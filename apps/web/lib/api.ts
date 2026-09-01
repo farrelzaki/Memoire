@@ -1,4 +1,7 @@
 import type { BlockPayload } from './blocks';
+import { offlineDb, STORES } from './offline-db';
+import { queueMutation } from './offline-sync';
+import { isMutatingMethod } from './offline-queue';
 import type {
   Attachment,
   Block,
@@ -20,24 +23,61 @@ export function attachmentContentUrl(id: string): string {
   return `${API_BASE}/attachments/${id}/content`;
 }
 
+function isNetworkError(err: unknown): boolean {
+  return err instanceof TypeError;
+}
+
+/**
+ * Offline-aware request helper (Sprint 11). GETs are cached in IndexedDB and
+ * served from cache when the network is unreachable; mutating requests get
+ * queued into the outbox and replayed once back online (see offline-sync.ts).
+ * This is client-local caching, not sync — there is still exactly one
+ * writer (this browser), so no conflict resolution is needed.
+ */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-  });
+  const method = (init?.method ?? 'GET').toUpperCase();
 
-  if (!res.ok) {
-    let detail = '';
-    try {
-      const body = (await res.json()) as { error?: { message?: string } };
-      detail = body.error?.message ?? '';
-    } catch {
-      // non-JSON error body — ignore
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    });
+
+    if (!res.ok) {
+      let detail = '';
+      try {
+        const body = (await res.json()) as { error?: { message?: string } };
+        detail = body.error?.message ?? '';
+      } catch {
+        // non-JSON error body — ignore
+      }
+      throw new Error(detail || `Request failed (${res.status})`);
     }
-    throw new Error(detail || `Request failed (${res.status})`);
-  }
 
-  return res.json() as Promise<T>;
+    const data = (await res.json()) as T;
+    if (method === 'GET' && offlineDb.isAvailable()) {
+      void offlineDb.put(STORES.httpCache, data, path);
+    }
+    return data;
+  } catch (err) {
+    if (!isNetworkError(err) || !offlineDb.isAvailable()) throw err;
+
+    if (method === 'GET') {
+      const cached = await offlineDb.get<T>(STORES.httpCache, path);
+      if (cached !== undefined) return cached;
+      throw err;
+    }
+
+    if (isMutatingMethod(method)) {
+      const body = init?.body ? (JSON.parse(init.body as string) as unknown) : undefined;
+      await queueMutation(method as 'POST' | 'PATCH' | 'PUT' | 'DELETE', path, body);
+      // Optimistic result: caller's own payload is the best local guess at
+      // the post-mutation state until the queued request lands.
+      return (body ?? {}) as T;
+    }
+
+    throw err;
+  }
 }
 
 export interface CreatePageInput {
