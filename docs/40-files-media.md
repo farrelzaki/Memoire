@@ -103,62 +103,100 @@ Lazy loading
 
 ---
 
-# 29A. Kebijakan Media Self-Hosted
+# 29A. Sumber Daya Eksternal
 
-Aturan tunggal yang membentuk banyak keputusan lain di dokumen ini:
-
-> **Aplikasi ini tidak pernah membuat permintaan jaringan ke host mana pun selain API-nya sendiri.**
-
-## 29A.1 Cakupan
-
-Berlaku untuk kode frontend maupun backend, saat runtime maupun saat build.
+Aplikasi ini **boleh** menghubungi internet. Yang tidak ada, dan tidak akan pernah ada, adalah
+fitur yang melibatkan orang lain (§56.2). Keduanya sering tertukar; seksi ini memisahkannya.
 
 ```text
-Dilarang
-  fetch/XHR ke host pihak ketiga, dari browser maupun dari NestJS
-  iframe apa pun
-  <img>, <video>, <audio> yang src-nya menunjuk ke luar
-  font, script, atau CSS dari CDN
-  pengambilan metadata Open Graph untuk pratinjau tautan
-  push service / VAPID
-  unduhan aset saat build (termasuk next/font/google)
+BOLEH     mengambil metadata untuk pratinjau tautan (blok bookmark)
+          embed lewat iframe
+          gambar, video, audio dari URL
+          font atau aset dari CDN
+          push service untuk notifikasi latar
+          pemeriksaan pembaruan aplikasi desktop
 
-Diizinkan
-  permintaan ke API Memoire sendiri
-  berkas dari object storage sendiri (MinIO/S3), disalurkan lewat API
-  aset yang di-bundle atau ada di public/
+DITUNDA   integrasi yang butuh akun pihak ketiga:
+          Google Drive, Slack, Figma, Notion sync, GitHub, web clipper.
+          Bukan dilarang selamanya -- belum dibutuhkan sekarang.
+
+TIDAK     apa pun yang melibatkan pengguna lain (§56.2).
+          Ini satu-satunya larangan permanen.
 ```
 
-## 29A.2 Konsekuensi yang sudah diterima
+## 29A.1 Aturan mengambil data dari luar
+
+Boleh bukan berarti sembarangan. Empat aturan berlaku untuk setiap permintaan keluar:
 
 ```text
-Tidak ada blok bookmark / pratinjau tautan   -- alamat luar tetap teks yang bisa diklik
-Tidak ada blok embed (YouTube, Figma, dll)
-Tidak ada gambar/video dari URL              -- upload saja
-Tidak ada notifikasi latar saat aplikasi tertutup  -- §70.5
-Tidak ada galeri template daring             -- template lokal saja
-Tidak ada auto-update yang mengunduh sendiri -- §36
+1. Diambil dari SERVER, bukan dari browser.
+   Pratinjau tautan di-fetch oleh NestJS lalu di-cache. Kalau browser yang menembak
+   langsung, setiap situs yang pernah ditempel tahu alamat IP dan waktu baca pengguna.
+   Ini aplikasi catatan pribadi; kebocoran itu tidak sepadan.
+
+2. Timeout dan batas ukuran.
+   5 detik, maksimal 1MB untuk halaman HTML, hanya ambil bagian <head> untuk
+   metadata Open Graph. Situs yang lambat tidak boleh menggantung request pengguna.
+
+3. Penjaga SSRF.
+   Tolak alamat loopback, IP privat (10.x, 172.16-31.x, 192.168.x, 169.254.x),
+   dan skema selain http/https. Tanpa ini, menempel http://localhost:3001/api/export/json
+   ke sebuah halaman membuat server mengambil isinya sendiri dan menaruhnya di pratinjau.
+
+4. Hasilnya di-cache dan konten tetap utuh tanpanya.
+   Metadata bookmark disimpan di blocks.content. Bila pengambilan gagal atau
+   sedang offline, blok tetap merender judul apa adanya sebagai tautan biasa --
+   tidak pernah kosong, tidak pernah error.
 ```
 
-Semuanya punya padanan berbasis upload atau lokal, kecuali notifikasi latar, yang memang tidak bisa
-didapat tanpa melanggar aturan ini (§70.5, §72).
-
-## 29A.3 Aset yang mudah bocor tanpa disadari
-
-Tiga hal berikut secara default mengambil dari internet, dan ketiganya ada di rencana:
+## 29A.2 Embed
 
 ```text
-KaTeX    font-nya ikut di paket npm; SALIN ke public/, jangan pakai contoh dokumentasi
-         resminya yang menunjuk cdn.jsdelivr.net
-Shiki    bundel penuhnya ~6MB grammar; pakai createHighlighterCore dengan sekitar 20
-         bahasa yang diimpor eksplisit, dan dynamic import saat blok kode pertama dirender
-Font     self-host di public/fonts lewat next/font/local.
-         next/font/google MENGUNDUH SAAT BUILD -- build jadi tidak bisa offline
+iframe dengan sandbox="allow-scripts allow-same-origin allow-popups"
+referrerpolicy="no-referrer"
+loading="lazy"
+daftar rasio aspek per penyedia yang dikenali, fallback 16:9
 ```
 
-## 29A.4 Cara menjaganya tetap benar
+Embed selalu memuat situs pihak ketiga di dalam aplikasi. Sandbox dan `no-referrer` adalah batas
+minimum; tanpa keduanya halaman yang di-embed bisa membaca konteks yang tidak seharusnya.
 
-Aturan seperti ini pelan-pelan bocor kalau hanya ditulis. Karena itu §40 menambahkan satu tes
-Playwright yang **gagal bila ada permintaan ke origin non-lokal** selama penelusuran penuh
-aplikasi. Itu satu-satunya mekanisme yang benar-benar menahan aturan ini seiring waktu; sisanya
-adalah niat baik.
+## 29A.3 Media
+
+```text
+Upload    melewati attachments dan object storage (§28) -- jalur utama
+Dari URL  disimpan sebagai URL di blocks.content, dirender langsung
+```
+
+Keduanya didukung. Menyimpan sebagai URL berarti berkasnya bisa hilang sewaktu-waktu di luar
+kendali kita, jadi UI menawarkan "simpan salinan" yang mengunduh dan memindahkannya ke object
+storage. Untuk catatan yang ingin disimpan lama, upload tetap pilihan yang lebih baik — dan itu
+disampaikan sebagai saran, bukan dipaksakan.
+
+## 29A.4 Perilaku saat offline
+
+Ini yang membuat aturan §29A.1 nomor 4 penting. Aplikasi punya dukungan offline (§14), dan sumber
+daya eksternal adalah bagian pertama yang gagal saat jaringan hilang:
+
+```text
+Bookmark   metadata yang sudah di-cache tetap tampil; kalau belum pernah diambil,
+           tampil sebagai tautan biasa
+Embed      placeholder dengan judul dan tombol "muat ulang"
+Media URL  placeholder; media hasil upload tetap tampil dari cache service worker
+```
+
+Tidak ada satu pun yang boleh membuat halaman gagal dirender. Konten pengguna selalu utuh; yang
+hilang hanya hiasannya.
+
+## 29A.5 Aset dan build
+
+Self-hosting tetap **dianjurkan** untuk aset yang dipakai di setiap halaman — bukan karena aturan,
+tapi karena lebih cepat dan tidak menambah titik gagal:
+
+```text
+Font KaTeX     ikut di paket npm; salin ke public/ (satu langkah, hilangkan CDN)
+Grammar Shiki  pakai createHighlighterCore dengan ~20 bahasa yang diimpor eksplisit
+               + dynamic import; ini soal ukuran bundel (~6MB penuh), bukan jaringan
+Font teks      next/font/local bila ingin build yang bisa jalan tanpa jaringan;
+               next/font/google boleh, tapi build jadi butuh internet
+```

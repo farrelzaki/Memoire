@@ -238,16 +238,16 @@ Warna teks dan latar memakai palet token tema (§34), bukan nilai hex bebas, sup
 saat berpindah antara mode terang dan gelap. Ini alasan teknis, bukan selera: teks kuning yang
 dipilih di mode terang menjadi tidak terbaca di mode gelap kalau disimpan sebagai hex.
 
-## 12A.2 Link tanpa jaringan keluar
+## 12A.2 Link
 
 ```text
 Link internal    menunjuk pageId; dirender dengan ikon dan judul halaman yang hidup
 Link eksternal   anchor biasa, target _blank, rel="noopener noreferrer"
 ```
 
-**Tidak ada pengambilan pratinjau.** Tidak ada judul halaman, favicon, atau gambar yang diambil
-dari alamat eksternal. Ini konsekuensi langsung §29A: alamat eksternal tetap teks yang bisa
-diklik, tidak lebih. Blok bookmark Notion sengaja tidak dibangun (§56).
+Menempel sebuah URL menawarkan tiga pilihan, seperti di Notion: biarkan sebagai teks, jadikan
+tautan, atau ubah jadi blok bookmark dengan pratinjau (§12B.3). Pratinjaunya diambil dari sisi
+server dengan aturan di §29A.1 — bukan langsung dari browser.
 
 ## 12A.3 Mention
 
@@ -321,18 +321,20 @@ table                BARU  -- tabel sederhana (Tiptap table), bukan database
 columns              BARU  -- 2 sampai 5 kolom, lebar bisa digeser
 ```
 
-## 12B.2 Media — hanya hasil upload
+## 12B.2 Media
 
 ```text
 image                ada; perlu: resize, align, caption, full-bleed
-video                BARU  -- upload saja
-audio                BARU  -- upload saja
-file                 BARU  -- upload saja, tampil sebagai kartu unduhan
-pdf                  BARU  -- upload saja, dirender dengan viewer PDF bawaan browser
+video                BARU  -- upload atau URL
+audio                BARU  -- upload atau URL
+file                 BARU  -- upload, tampil sebagai kartu unduhan
+pdf                  BARU  -- upload atau URL, dirender dengan viewer bawaan browser
 ```
 
-**Tidak ada media dari URL.** Semua berkas melewati `attachments` dan object storage (§28, §29A).
-Ini konsekuensi langsung dari keputusan "nol request keluar" dan berlaku tanpa pengecualian.
+Dua sumber didukung: upload (lewat `attachments` dan object storage, §28) dan URL langsung. Upload
+adalah jalur yang dianjurkan untuk apa pun yang ingin disimpan lama — berkas di URL orang lain bisa
+hilang tanpa pemberitahuan. Blok media dari URL menawarkan "simpan salinan" yang memindahkannya ke
+object storage; lihat §29A.3.
 
 ## 12B.3 Tautan dan navigasi
 
@@ -343,6 +345,8 @@ breadcrumb           BARU  -- jejak induk halaman ini
 table_of_contents    BARU  -- diturunkan dari heading di halaman; tidak menyimpan apa pun
 synced_block         BARU  -- lihat 12B.4
 template_button      BARU  -- menyisipkan sekumpulan blok dari templates (§28 roadmap)
+bookmark             BARU  -- kartu pratinjau URL: judul, deskripsi, favicon, gambar (§29A.1)
+embed                BARU  -- iframe ber-sandbox (§29A.2)
 database_view        BARU  -- database inline atau linked view (§20C.3)
 mermaid              ada   -- di luar cakupan Notion, dipertahankan
 ```
@@ -391,12 +395,14 @@ ini satu-satunya cara daftar sepanjang ini tidak pelan-pelan bocor di jalur eksp
 ## 12B.7 Yang sengaja tidak dibangun
 
 ```text
-bookmark / link preview    butuh pengambilan metadata dari alamat luar (§29A)
-embed (iframe apa pun)     butuh memuat situs lain
-gambar/video dari URL      sama
+komentar per-blok          fitur multi-pengguna -- tidak akan pernah ada (§56.2)
 button multi-aksi          ditunda; template_button menutup sebagian besar kebutuhannya
-komentar per-blok          fitur multi-pengguna (§56)
+blok AI                    ditunda bersama integrasi pihak ketiga lain (§56.3)
 ```
+
+Blok bookmark, embed, dan media dari URL **dibangun** — lihat §12B.2 dan §12B.3. Ketiganya sempat
+dicoret pada revisi sebelumnya karena aturan "nol jaringan keluar" yang ternyata salah tafsir;
+batasan proyek ini sebenarnya hanya soal fitur yang melibatkan orang lain (§56.2).
 
 ---
 

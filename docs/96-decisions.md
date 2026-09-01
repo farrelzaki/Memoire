@@ -207,8 +207,8 @@ Lihat §19A.
 **Keputusan.** Route `/print/[pageId]` dengan print stylesheet, dicetak oleh browser pengguna.
 
 **Alasan.** Puppeteer sekitar 300MB, butuh browser di dalam image Docker, dan mengunduh Chromium
-saat instalasi — yang dengan sendirinya melanggar aturan nol-jaringan (§29A). Browser sudah menjadi
-mesin layout HTML terbaik yang tersedia; kita hanya tidak perlu mem-bundel satu lagi.
+saat instalasi. Browser sudah menjadi mesin layout HTML terbaik yang tersedia; kita hanya tidak
+perlu mem-bundel satu lagi hanya untuk satu fitur ekspor.
 
 **Konsekuensi.** PDF batch tanpa browser tidak tersedia. Bila suatu saat dibutuhkan, `pdfkit`
 dengan tata letak yang disederhanakan, dan dikatakan apa adanya bahwa hasilnya berbeda.
@@ -233,60 +233,74 @@ Lihat §39A.
 
 ---
 
-## ADR-14 — Nol permintaan jaringan keluar
+## ADR-14 — Batasannya adalah pengguna lain, bukan jaringan
 
-**Konteks.** Keputusan pemilik proyek. Aplikasi ini catatan pribadi; ia tidak seharusnya
-memberitahu siapa pun apa yang sedang dibaca atau ditulis.
+**Konteks.** Pemilik proyek menyatakan "tidak perlu ada hubungan dengan aplikasi lain seperti
+Drive". Revisi sebelumnya menafsirkannya terlalu jauh menjadi aturan **nol permintaan jaringan
+keluar**, yang mencoret blok bookmark, embed, media dari URL, aset CDN, dan notifikasi push —
+padahal tidak satu pun dari itu melibatkan pengguna lain atau akun pihak ketiga.
 
-**Keputusan.** Tidak ada permintaan ke host mana pun selain API sendiri — runtime maupun build.
-Tidak ada iframe, media dari URL, font CDN, pratinjau tautan, atau layanan push.
+**Keputusan.** Yang dibatasi adalah **fitur yang melibatkan pengguna lain**, dan hanya itu.
+Aplikasi bebas menghubungi internet.
 
-**Konsekuensi.** Blok bookmark, embed, dan media-dari-URL tidak dibangun; semuanya punya padanan
-berbasis upload. KaTeX, Shiki, dan font harus di-host sendiri — ketiganya secara default mengambil
-dari internet, jadi mudah bocor tanpa disadari. `next/font/google` mengunduh saat build; pakai
-`next/font/local`.
+```text
+TIDAK AKAN ADA   apa pun yang melibatkan orang lain: share, permission, komentar,
+                 mention @orang, presence, penugasan, teamspace, Created by
+DITUNDA          integrasi yang butuh akun pihak ketiga (Drive, Slack, Figma,
+                 GitHub, Notion sync, web clipper, AI) -- belum dibutuhkan
+BOLEH            pratinjau tautan, embed, media dari URL, aset CDN, push service,
+                 pemeriksaan pembaruan desktop
+```
 
-**Penegakan.** Satu tes Playwright yang gagal bila ada permintaan ke origin non-lokal. Aturan yang
-hanya ditulis akan bocor; ini satu-satunya mekanisme yang menahannya.
+**Konsekuensi.** Blok bookmark, embed, dan media dari URL masuk kembali ke rencana (§12B). Aturan
+teknis untuk permintaan keluar ada di §29A: diambil dari sisi server (bukan browser, supaya alamat
+IP pengguna tidak bocor ke setiap situs yang pernah ditempel), dengan timeout, batas ukuran,
+penjaga SSRF, dan hasil yang di-cache sehingga konten tetap utuh saat offline.
 
-Lihat §29A.
+**Pelajaran yang layak dicatat.** "Tidak butuh integrasi dengan aplikasi lain" dan "tidak boleh
+menyentuh jaringan" terdengar mirip tapi jaraknya jauh. Yang pertama soal akun dan sinkronisasi;
+yang kedua mencoret separuh blok media Notion. Batasan produk sebaiknya dikonfirmasi pada level
+fitur, bukan diangkat sendiri menjadi aturan teknis yang lebih luas.
 
 ---
 
-## ADR-15 — Notifikasi lewat service worker, tanpa push service
+## ADR-15 — Notifikasi: polling saat terbuka, Web Push untuk latar
 
-**Konteks.** Reminder butuh pengiriman. Web Push membutuhkan VAPID dan endpoint push milik Google
-atau Mozilla — permintaan keluar, dilarang ADR-14.
+**Konteks.** Reminder butuh pengiriman, termasuk saat aplikasi tidak sedang dibuka.
 
-**Keputusan.** Scheduler `@nestjs/schedule` menulis ke tabel `notifications`; halaman melakukan
-polling dan memanggil `registration.showNotification()` lewat service worker yang sudah ada.
-`FOR UPDATE SKIP LOCKED` menggantikan lock terdistribusi.
+**Keputusan.** Dua lapis:
 
-**Batas yang tidak bisa dihindari.** Bila aplikasi tidak terbuka di tab mana pun, tidak ada yang
-berbunyi sampai ia dibuka lagi — saat itu reminder terlewat muncul dikelompokkan sebagai "Terlewat".
-**Ini kemampuan yang memang tidak bisa didapat tanpa melanggar ADR-14.** Ditulis terbuka, bukan
-disamarkan.
+```text
+Aplikasi terbuka   polling TanStack Query tiap 30 detik ->
+                   registration.showNotification() lewat service worker
+Aplikasi tertutup  Web Push (VAPID), service worker berlangganan ke push service browser
+Desktop            poller lokal di shell Tauri -> notifikasi OS asli;
+                   lebih andal karena tidak bergantung izin dan langganan browser
+```
 
-**Jalan keluar.** Shell Tauri (§36) menjalankan poller lokal dan memunculkan notifikasi OS asli —
-tanpa layanan pihak ketiga. Sprint 29.
+Scheduler tetap `@nestjs/schedule` dengan `FOR UPDATE SKIP LOCKED` — aman tanpa lock
+terdistribusi, jadi tidak butuh Redis.
+
+**Konsekuensi.** Reminder yang terlewat tetap dikelompokkan sebagai "Terlewat" saat aplikasi
+dibuka. Pengiriman latar bisa gagal karena izin ditolak, perangkat mati, atau langganan
+kedaluwarsa — pengguna tidak boleh kehilangan pengingat karena itu, jadi inbox in-app tetap sumber
+kebenarannya.
 
 Lihat §70.
 
 ---
 
-## ADR-16 — Auto-update Tauri dinonaktifkan
+## ADR-16 — Auto-update Tauri tetap aktif
 
-**Konteks.** Sprint 12 memasang `tauri-plugin-updater` yang menunjuk sebuah endpoint rilis. Itu
-bertentangan langsung dengan ADR-14.
+**Konteks.** Sprint 12 memasang `tauri-plugin-updater`. Revisi sebelumnya menonaktifkannya karena
+ADR-14 versi lama.
 
-**Keputusan.** Updater dinonaktifkan (`active: false`); pembaruan dilakukan manual dengan mengunduh
-installer baru.
+**Keputusan.** Tetap aktif. Memeriksa pembaruan aplikasi sendiri tidak melibatkan pengguna lain dan
+bukan integrasi pihak ketiga.
 
-**Kalau berubah pikiran.** Ia harus dicatat sebagai **pengecualian tunggal yang eksplisit** terhadap
-ADR-14, dengan endpoint yang disebutkan namanya, dan tes penjaga jaringan (§29A.4) harus
-mengecualikan host itu secara eksplisit — bukan dilonggarkan secara umum.
-
----
+**Yang masih harus dikerjakan** sebelum rilis: `plugins.updater.pubkey` masih berisi placeholder,
+dan endpoint-nya menunjuk host yang belum ada. Selama keduanya belum nyata, updater tidak akan
+berhasil memperbarui apa pun — itu pekerjaan rilis, bukan keputusan arsitektur.
 
 ## ADR-17 — Empat registry, serializer wajib di tipe
 

@@ -49,7 +49,7 @@ number         -- angka
 select         -- satu pilihan dari daftar opsi
 checkbox       -- boolean
 date           -- tanggal
-url            -- alamat web (tetap teks; tidak ada fetch preview, §29A)
+url            -- alamat web; bisa ditampilkan sebagai kartu pratinjau (§29A.1)
 ```
 
 ## 20A.2 Ditambahkan
@@ -58,9 +58,9 @@ url            -- alamat web (tetap teks; tidak ada fetch preview, §29A)
 multi_select      -- banyak opsi, tiap opsi punya warna
 status            -- seperti select, tapi opsinya dikelompokkan:
                      To-do / In progress / Complete; grup menentukan perilaku default board
-email             -- divalidasi bentuknya; aksi "salin", bukan "kirim" (tidak ada integrasi mail)
-phone             -- sama, aksi salin saja
-files             -- lampiran; HANYA hasil upload sendiri (§29A), disimpan lewat attachments
+email             -- divalidasi bentuknya; aksi salin dan mailto:
+phone             -- aksi salin dan tel:
+files             -- lampiran; upload ke attachments, atau URL langsung (§29A.3)
 created_time      -- turunan, dari database_rows.created_at
 last_edited_time  -- turunan, dari database_rows.updated_at
 unique_id         -- auto-increment per database, dengan prefix opsional (mis. TUGAS-14)

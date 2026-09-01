@@ -6,10 +6,11 @@ Panduan ini dibaca oleh Claude Code setiap kali bekerja di repo ini. Tujuannya: 
 
 **Memoire** adalah personal knowledge management app bergaya Notion — dipakai oleh **satu pengguna saja**. Tidak ada dan tidak akan ada fitur multi-user, kolaborasi realtime, atau permission antar-akun.
 
-Targetnya adalah **paritas fitur penuh dengan Notion**, dikurangi dua hal yang menghapus permukaan besar:
+Targetnya adalah **paritas fitur penuh dengan Notion**, dengan satu pengecualian permanen:
 
-- **Satu pengguna** — tidak ada share, permission, komentar, mention orang, presence, penugasan, teamspace, atau properti "created by".
-- **Nol jaringan keluar** — tidak ada bookmark/pratinjau tautan, embed/iframe, media dari URL, integrasi, AI, atau push service. Aplikasi hanya menghubungi API-nya sendiri.
+- **Tidak ada fitur yang melibatkan pengguna lain** — tidak ada share, publish, permission, komentar, mention orang, presence, suggested edit, penugasan, teamspace, atau properti Person/Created by. Ini bentuk produknya, bukan tahapan.
+
+Selain itu, **integrasi yang butuh akun pihak ketiga** (Drive, Slack, Figma, GitHub, Notion sync, web clipper, AI) belum dikerjakan — ditunda karena belum dibutuhkan, bukan dilarang. Aplikasi sendiri bebas menghubungi internet untuk hal biasa: pratinjau tautan, embed, media dari URL, aset CDN, push notification. Aturan teknisnya di §29A.
 
 Status per fitur ada di `docs/95-notion-parity.md`; alasan di balik keputusan yang terasa aneh ada di `docs/96-decisions.md`.
 
@@ -42,7 +43,7 @@ Nomor seksi (§22, §11A) adalah identitas permanen, bukan posisi — jangan per
 Frontend   : Next.js, React, TypeScript, Tailwind CSS, Tiptap, Zustand, TanStack Query
 UI         : shadcn/ui + Radix, lucide-react            (mulai Sprint 14)
 Interaksi  : dnd-kit (di luar editor), drag native ProseMirror (di dalam editor)
-Konten     : KaTeX (math), Shiki (syntax highlight), date-fns  — semuanya self-hosted
+Konten     : KaTeX (math), Shiki (syntax highlight), date-fns
 Whiteboard : Excalidraw
 Diagram    : React Flow (page penuh), Mermaid (block inline di document)
 Backend    : NestJS, TypeScript, REST, Zod, @nestjs/schedule
@@ -104,7 +105,7 @@ Aturan yang harus benar setiap saat. Sebagian tidak bisa dipaksakan basis data �
 2. **UUID dari klien.** Setiap `POST` menerima `id` opsional dari klien, dan klien selalu mengirimkannya. Tidak ada pemetaan ulang id sementara di mana pun.
 3. **PATCH yang bisa digabung harus lengkap.** Resource yang PATCH-nya mungkin di-coalesce oleh outbox offline (terutama `database_rows.values`) dikirim sebagai representasi **utuh**, bukan patch parsial dari objek bersarang.
 4. **State view tersimpan, tidak pernah `useState`.** Filter, sort, grup, visibilitas & urutan & lebar kolom, row height, konfigurasi kartu, dan kalkulasi semuanya di `database_views.config`, divalidasi `viewConfigSchema`, dan selalu melewati `migrateViewConfig` saat baca maupun tulis.
-5. **Nol jaringan keluar.** Tidak ada `fetch` ke host selain API sendiri, dari web maupun api. Tidak ada iframe, gambar remote, embed, font/script CDN, pengambilan pratinjau tautan, atau push service. Semua aset self-hosted di `public/`. Media hanya dari upload pengguna. Kalau sebuah fitur sepertinya butuh request keluar, ia di luar cakupan — berhenti dan tanyakan.
+5. **Permintaan keluar diambil dari server, bukan browser.** Pratinjau tautan dan pengambilan metadata dijalankan oleh NestJS lalu di-cache — kalau browser yang menembak langsung, setiap situs yang pernah ditempel tahu IP dan waktu baca pengguna. Wajib ada timeout, batas ukuran, dan **penjaga SSRF** (tolak loopback, IP privat, skema non-http). Hasilnya di-cache dan konten harus tetap utuh saat pengambilan gagal atau offline. Detail di §29A.
 6. **Kepemilikan drag.** Reorder blok memakai drag native ProseMirror. dnd-kit tidak pernah dipasang di dalam DOM konten ProseMirror. `DndContext` per fitur, **tidak pernah** di `layout.tsx` — Excalidraw dan React Flow menangkap pointer event secara agresif.
 7. **Nilai turunan otoritatif di server.** Hasil formula dan rollup ada di `database_rows.computed`, ditulis hanya oleh API, tidak pernah oleh klien. Formula volatil (`now`/`today`) dievaluasi saat baca dan tidak bisa di-filter/sort di SQL.
 8. **Server adalah kontrak kueri.** Pembacaan baris database lewat `POST /databases/:id/query`. Filter/sort di klien hanya overlay optimistik, dan dimatikan di atas satu halaman baris.
@@ -126,7 +127,7 @@ Aturan yang harus benar setiap saat. Sebagian tidak bisa dipaksakan basis data �
 - Wajib punya unit test tersendiri: `@memoire/formula` (parser, evaluator, deteksi siklus), query/filter builder, `migrateViewConfig`, round-trip setiap serializer blok (`toHtml`/`toMarkdown`/`toPlainText`), coalescer offline, dan kebijakan retensi versi.
 - Endpoint baru di NestJS wajib punya integration test (Supertest).
 - Flow kritis dijaga lewat Playwright — jangan hapus/skip tanpa alasan kuat.
-- **Tes penjaga jaringan**: satu tes Playwright yang gagal bila ada request ke origin non-lokal selama penelusuran penuh aplikasi. Ini satu-satunya mekanisme yang benar-benar menahan invarian 5 seiring waktu.
+- **Tes penjaga SSRF**: pengambil pratinjau tautan wajib punya tes yang menolak loopback, IP privat, dan skema non-http. Tanpa itu, menempel `http://localhost:3001/api/export/json` ke sebuah halaman membuat server mengambil isinya sendiri dan menaruhnya di pratinjau.
 
 ## Yang TIDAK boleh ditambahkan tanpa diskusi eksplisit
 
@@ -137,12 +138,11 @@ Microservices / Kubernetes / GraphQL / Kafka
 Redis (sebelum ada kebutuhan cache/queue yang jelas)
 Plugin runtime pihak ketiga (registry tetap internal, compile-time)
 
-Request keluar dalam bentuk apa pun:
-  HTTP client ke host pihak ketiga
-  iframe, embed, atau media dari URL
-  pengambilan metadata untuk pratinjau tautan
-  push service / VAPID
-  font, script, atau CSS dari CDN (termasuk next/font/google — pakai next/font/local)
+Integrasi yang butuh akun pihak ketiga (ditunda, bukan dilarang — diskusikan dulu):
+  Google Drive, Slack, Figma, GitHub, Jira
+  Notion sync / database tersinkron dari sumber luar
+  Web clipper, import lewat API Evernote/Google Docs
+  Fitur AI
 
 Implementasi yang sudah ditolak beserta alasannya di docs/96-decisions.md:
   Puppeteer / headless browser untuk ekspor PDF        (ADR-12)
@@ -153,6 +153,8 @@ Implementasi yang sudah ditolak beserta alasannya di docs/96-decisions.md:
   FK cascade yang menghapus baris pages                (ADR-10)
   State view di React useState                         (ADR-18)
   Klien menulis database_rows.computed                 (ADR-03)
+  Fetch ke host luar langsung dari browser             (§29A.1 — bocor privasi)
+  Fetch tanpa timeout, batas ukuran, dan penjaga SSRF  (§29A.1)
 ```
 
 Kalau sebuah task sepertinya membutuhkan salah satu di atas, berhenti dan tanyakan ke user dulu — kemungkinan besar ada pendekatan lebih sederhana yang sejalan dengan prinsip proyek ini.

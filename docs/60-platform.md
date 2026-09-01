@@ -154,7 +154,7 @@ Danger zone
 ```text
 Members, guests, permission     -- satu pengguna (§56)
 Plan, billing                   -- tidak ada layanan
-Connections, integrations       -- tidak ada jaringan keluar (§29A)
+Connections, integrations       -- ditunda, belum dibutuhkan (§56.3)
 Public sites, domain            -- tidak ada penerbitan
 Analytics workspace             -- tidak ada yang perlu diukur untuk orang lain
 ```
@@ -310,21 +310,29 @@ Notifikasi browser
     navigator.serviceWorker.ready.then(r => r.showNotification(...))
   service worker menangani notificationclick untuk fokus/membuka target
   memakai apps/web/public/sw.js yang sudah ada dari Sprint 11
-  TANPA push service, TANPA VAPID, TANPA request keluar
+  cukup untuk notifikasi selama aplikasi terbuka, tanpa layanan apa pun
 ```
 
-## 70.5 Batas yang tidak bisa dihindari
+## 70.5 Pengiriman latar
 
-**Bila aplikasi tidak terbuka di tab mana pun, tidak ada yang berbunyi** sampai ia dibuka lagi —
-saat itu reminder yang terlewat muncul dikelompokkan sebagai "Terlewat".
+Polling di §70.4 hanya bekerja selama ada tab yang terbuka. Untuk reminder yang berbunyi walau
+aplikasi tertutup, ada dua jalur, dan keduanya dipakai:
 
-Pengiriman latar sejati membutuhkan endpoint push service, yang berarti permintaan ke host pihak
-ketiga dan melanggar §29A. **Ini kemampuan yang memang tidak bisa didapat tanpa melanggar aturan
-yang berlaku**, jadi ditulis terbuka di sini dan di §72, bukan disamarkan.
+```text
+Web Push (VAPID)   service worker berlangganan ke push service browser.
+                   Butuh sepasang kunci VAPID dan endpoint push milik vendor browser.
+                   Bekerja di web, termasuk saat tab tertutup.
 
-Jalan keluarnya ada di tempat yang tepat: shell Tauri (§36) bisa menjalankan poller kecil di latar
-belakang terhadap API lokal dan memunculkan notifikasi OS asli — tanpa layanan pihak ketiga dan
-tanpa jaringan keluar. Sprint 29 mengerjakannya.
+Tauri (§36)        poller lokal di dalam shell desktop memanggil API sendiri lalu
+                   memunculkan notifikasi OS asli. Tidak butuh layanan apa pun,
+                   dan lebih andal di desktop karena tidak bergantung browser.
+```
+
+Urutan pengerjaan: Web Push di Sprint 26, notifikasi OS Tauri di Sprint 29.
+
+Apa pun jalurnya, reminder yang terlewat tetap dikelompokkan sebagai "Terlewat" saat aplikasi
+dibuka — pengiriman latar bisa gagal karena izin ditolak, perangkat mati, atau langganan kedaluwarsa,
+dan pengguna tidak boleh kehilangan pengingat karena itu.
 
 ## 70.6 Tampilan "Upcoming"
 

@@ -87,7 +87,8 @@ dan hasilnya selalu masuk ke satu halaman induk yang bisa dibuang sekaligus.
 ```text
 Selalu di bawah SATU halaman induk baru, tidak pernah tersebar ke akar
 Snapshot versi 'pre_import' bila impor menimpa halaman yang ada (§33A)
-Gambar dan lampiran melewati attachments; tidak ada tautan ke berkas luar (§29A)
+Gambar dan lampiran diunduh lalu dipindah ke attachments, bukan ditinggal sebagai tautan
+  ke berkas luar yang bisa hilang (§29A.3)
 Blok yang tidak dikenali -> jadi blok kode berisi sumber aslinya, bukan dibuang diam-diam
 ```
 
@@ -132,7 +133,7 @@ Nilai formula dan rollup ikut terekspor sebagai nilai hasilnya, bukan rumusnya.
 ## 30B.3 PDF lewat `window.print()`
 
 Menambahkan Puppeteer atau Playwright-chromium berarti sekitar 300MB, sebuah browser di dalam
-image Docker, dan unduhan Chromium saat instalasi — yang dengan sendirinya melanggar §29A.
+image Docker, dan unduhan Chromium saat instalasi — biaya besar untuk satu fitur ekspor.
 
 Pendekatannya:
 
@@ -148,8 +149,8 @@ apps/web/app/print/[pageId]/page.tsx
 "Ekspor ke PDF" membuka route itu di iframe tersembunyi lalu memanggil print()
 ```
 
-Nol dependensi, nol jaringan, memakai font asli pengguna, dan hasilnya bagus justru karena browser
-memang mesin layout HTML terbaik yang tersedia — kita hanya tidak perlu **mem-bundel** satu.
+Nol dependensi tambahan, memakai font asli pengguna, dan hasilnya bagus justru karena browser
+memang mesin layout HTML terbaik yang tersedia — kita hanya tidak perlu **mem-bundel** satu lagi.
 
 **Puppeteer masuk daftar yang tidak boleh ditambahkan tanpa diskusi.** Bila suatu saat benar-benar
 butuh PDF batch tanpa browser (misalnya backup terjadwal), pakai `pdfkit` (JS murni) dengan tata

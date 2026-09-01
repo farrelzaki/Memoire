@@ -13,7 +13,8 @@ dan sekaligus rem terhadap kecenderungan menambah fitur yang Notion sendiri tida
 ADA       sudah jalan
 SEBAGIAN  ada tapi belum setara
 BELUM     direncanakan, ada di roadmap
-DILUAR    sengaja tidak dibangun, dengan alasannya
+DITUNDA   belum dikerjakan, bukan dilarang
+DILUAR    tidak akan pernah ada -- semuanya karena melibatkan pengguna lain
 ```
 
 ## 71.1 Blok
@@ -26,14 +27,12 @@ SEBAGIAN   code block   -- tanpa syntax highlight, pemilih bahasa, tombol salin
 BELUM      toggle list, toggle heading 1-3, callout, columns 2-5, table sederhana,
            equation block, inline equation, sub-page, link-to-page, breadcrumb,
            table of contents, synced block, template button,
-           video / audio / file / PDF (upload saja),
+           video / audio / file / PDF (upload atau URL),
+           bookmark (pratinjau URL), embed ber-sandbox,
            database inline, linked database view
-DILUAR     bookmark & link preview     -- butuh fetch metadata dari luar (§29A)
-           embed / iframe apa pun      -- butuh memuat situs lain
-           gambar/video dari URL       -- sama
-           button multi-aksi           -- ditunda; template button menutup sebagian besar
-           komentar per blok           -- fitur multi-pengguna (§56)
-           blok AI                     -- butuh jaringan keluar
+DITUNDA    button multi-aksi   -- template button menutup sebagian besar kebutuhannya
+           blok AI             -- bersama integrasi pihak ketiga lain (§56.3)
+DILUAR     komentar per blok   -- melibatkan pengguna lain (§56.2)
 ```
 
 ## 71.2 Formatting inline
@@ -43,7 +42,7 @@ ADA        bold, italic, strike, inline code, input rule markdown dasar
 BELUM      underline, highlight, warna teks, warna latar, superscript, subscript,
            link (internal & eksternal), mention @halaman, mention @tanggal,
            inline equation, selection toolbar, paste markdown jadi blok
-DILUAR     mention @orang, komentar, suggested edit   -- multi-pengguna (§56)
+DILUAR     mention @orang, komentar, suggested edit   -- melibatkan pengguna lain (§56.2)
 ```
 
 ## 71.3 Tipe properti database
@@ -51,11 +50,11 @@ DILUAR     mention @orang, komentar, suggested edit   -- multi-pengguna (§56)
 ```text
 ADA        title, text, number, select, checkbox, date, url
 BELUM      multi-select, status (dengan grup todo/doing/done), email, phone,
-           files & media (upload saja), format number (persen, mata uang, bar, ring),
+           files & media (upload atau URL), format number (persen, mata uang, bar, ring),
            rentang tanggal + waktu, reminder pada tanggal,
            relation (satu & dua arah), rollup, formula,
            created time, last edited time, unique ID
-DILUAR     person, created by, last edited by   -- hanya ada satu pengguna (§56)
+DILUAR     person, created by, last edited by   -- melibatkan pengguna lain (§56.2)
 ```
 
 ## 71.4 View database
@@ -105,7 +104,7 @@ BELUM      database inline di dalam dokumen   -- terhalang unique constraint (§
            side peek / center peek
            template baris
            konversi tabel sederhana <-> database
-DILUAR     sinkronisasi database dari sumber eksternal   -- jaringan keluar (§29A)
+DITUNDA    sinkronisasi database dari sumber eksternal   -- butuh integrasi akun (§56.3)
 ```
 
 ## 71.8 Fitur halaman
@@ -117,7 +116,7 @@ ADA        page icon (emoji), cover (gradien & upload), favorite, duplicate,
 BELUM      cover reposition, font family, lock page, hitung kata,
            riwayat versi, panel backlink, page template,
            icon dari upload
-DILUAR     share, publish ke web, guest, komentar, analytics halaman   -- (§56)
+DILUAR     share, publish ke web, guest, komentar, analytics halaman   -- (§56.2)
 ```
 
 ## 71.9 Navigasi
@@ -152,30 +151,35 @@ ADA        export JSON seluruh workspace
 BELUM      export Markdown, CSV (per view), HTML, PDF (lewat print), ZIP + lampiran
            import Markdown, CSV -> database, Notion export ZIP, restore memoire.json
            backup terjadwal lokal
-DILUAR     import dari Evernote / Word / Google Docs lewat API   -- jaringan keluar
+DITUNDA    import dari Evernote / Google Docs lewat API mereka   -- butuh akun (§56.3)
 ```
 
 ## 71.12 Settings
 
 ```text
 BELUM      seluruhnya -- tidak ada UI settings sama sekali (§35A)
-DILUAR     members, guests, plan & billing, connections & integrations,
-           public sites, identity provisioning, analytics workspace   -- (§56)
+DITUNDA    connections & integrations   -- (§56.3)
+DILUAR     members, guests, plan & billing, public sites,
+           identity provisioning, analytics workspace   -- (§56.2)
 ```
 
 ## 71.13 Ringkasan pengecualian
 
-Dua alasan saja, dan keduanya disengaja:
+Hanya ada **satu** pengecualian permanen:
 
 ```text
-Satu pengguna       menghapus seluruh permukaan kolaborasi Notion:
-                    share, permission, komentar, mention orang, presence,
-                    penugasan, teamspace, properti "created by"
-
-Nol jaringan keluar menghapus seluruh permukaan integrasi:
-                    bookmark, embed, media dari URL, web clipper,
-                    database tersinkron, AI, notifikasi push, galeri template daring
+Fitur yang melibatkan pengguna lain -- tidak akan pernah ada.
+  share & publish, permission & role, komentar & diskusi, mention @orang,
+  presence & cursor, suggested edit, penugasan, teamspace & guest,
+  properti Person / Created by / Last edited by, activity feed, Forms
 ```
 
-Satu-satunya kemampuan yang **hilang tanpa penggantian** adalah notifikasi latar saat aplikasi
-tertutup; alasannya dan jalan keluarnya lewat build Tauri ada di §70.5 dan §72.
+Aplikasi ini dipakai satu orang, jadi seluruh permukaan kolaborasi Notion tidak punya arti di sini.
+Bukan ditunda — memang tidak berlaku.
+
+Di luar itu, yang belum ada hanyalah **ditunda**, bukan dilarang: integrasi yang butuh akun pihak
+ketiga (Drive, Slack, Figma, GitHub, Notion sync, web clipper, AI). Boleh masuk kapan saja lewat
+diskusi; masing-masing membawa OAuth dan penyimpanan token yang perlu dipikirkan dulu (§56.3).
+
+Aplikasi sendiri bebas menghubungi internet untuk hal biasa — pratinjau tautan, embed, media dari
+URL, aset CDN, push notification. Aturan teknisnya di §29A.

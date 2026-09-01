@@ -101,7 +101,7 @@ menemukan file sebuah nomor seksi.
 | §27 | Keyboard Shortcut | [`30-navigation-search.md`](./30-navigation-search.md) |
 | §28 | File Handling | [`40-files-media.md`](./40-files-media.md) |
 | §29 | Image System | [`40-files-media.md`](./40-files-media.md) |
-| §29A | Kebijakan Media Self-Hosted _(baru)_ | [`40-files-media.md`](./40-files-media.md) |
+| §29A | Sumber Daya Eksternal _(baru)_ | [`40-files-media.md`](./40-files-media.md) |
 | §30 | Import / Export | [`50-portability.md`](./50-portability.md) |
 | §30A | Pipeline Import _(baru)_ | [`50-portability.md`](./50-portability.md) |
 | §30B | Renderer (HTML / Markdown / CSV / print-PDF) _(baru)_ | [`50-portability.md`](./50-portability.md) |
@@ -198,18 +198,23 @@ Prioritas produk:
 ### Catatan tentang cakupan "sama persis dengan Notion"
 
 **Revisi:** target sekarang adalah **paritas fitur penuh dengan Notion**, bukan sekadar meniru
-mental model intinya. Setiap fitur Notion masuk rencana, kecuali yang gugur karena dua batasan
-proyek ini — dan keduanya menghapus permukaan yang besar:
+mental model intinya. Setiap fitur Notion masuk rencana, kecuali satu kelompok yang gugur karena
+bentuk produknya:
 
 ```text
-Satu pengguna        menghapus seluruh permukaan kolaborasi:
-                     share, permission, komentar, mention orang, presence,
-                     penugasan tugas, teamspace, properti "created by"
-
-Nol jaringan keluar  menghapus seluruh permukaan integrasi:
-                     bookmark & pratinjau tautan, embed/iframe, media dari URL,
-                     web clipper, database tersinkron, AI, notifikasi push
+Fitur yang melibatkan pengguna lain -- TIDAK AKAN PERNAH ADA
+  share & publish, permission & role, komentar & diskusi, mention @orang,
+  presence & cursor, suggested edit, penugasan tugas, teamspace & guest,
+  properti Person / Created by / Last edited by, activity feed, Notion Forms
 ```
+
+Itu satu-satunya pengecualian permanen. Aplikasi ini dipakai satu orang, jadi seluruh permukaan
+kolaborasi Notion tidak punya arti di sini — bukan ditunda, memang tidak berlaku.
+
+Selain itu, **integrasi yang butuh akun pihak ketiga** (Google Drive, Slack, Figma, GitHub, Notion
+sync, web clipper) belum dikerjakan — ditunda karena belum dibutuhkan, bukan dilarang. Aplikasi
+sendiri bebas menghubungi internet untuk hal biasa seperti pratinjau tautan, embed, media dari URL,
+dan notifikasi push; aturannya di §29A.
 
 Yang tersisa justru bagian Notion yang paling banyak dipakai untuk kerja pribadi: editor blok,
 database beserta relation, rollup, formula, dan tujuh jenis view, plus interaksi drag-and-drop yang
@@ -515,37 +520,39 @@ Properti Person / Created by / Last edited by
 Share, publish ke web, Notion Forms, analytics halaman
 ```
 
-## 56.3 Jaringan keluar — lihat §29A dan ADR-14
+## 56.3 Integrasi pihak ketiga — ditunda, bukan dilarang
 
-Aplikasi tidak pernah menghubungi host mana pun selain API-nya sendiri.
+Belum dikerjakan karena belum dibutuhkan. Kalau suatu saat memang berguna, ia boleh masuk — tapi
+lewat diskusi dulu, karena masing-masing membawa OAuth, penyimpanan token, dan penanganan kuota.
 
 ```text
-Blok bookmark / pratinjau tautan   -- butuh mengambil metadata dari situs lain
-Embed / iframe apa pun
-Gambar, video, atau media dari URL -- upload saja
+Google Drive, Slack, Figma, GitHub, Jira
+Notion sync (database yang tersinkron dari sumber luar)
 Web clipper
-Database tersinkron dari sumber luar (GitHub, Jira, Kalender, dll)
-Integrasi Drive / Figma / Slack / dan sejenisnya
+Import langsung dari Evernote / Google Docs lewat API mereka
 Fitur AI
-Notifikasi email, push service, VAPID
-Font, script, atau CSS dari CDN
-Galeri template daring
-Auto-update yang mengunduh sendiri  -- ADR-16
 ```
+
+Yang **tidak** termasuk daftar ini, dan boleh dikerjakan kapan saja: pratinjau tautan, embed
+iframe, media dari URL, aset CDN, push notification, dan pemeriksaan pembaruan desktop. Semuanya
+tidak butuh akun pihak ketiga. Aturan teknisnya — pengambilan dari sisi server, timeout, penjaga
+SSRF, dan perilaku saat offline — ada di §29A.
 
 ## 56.4 Implementasi yang dilarang
 
 Bukan fitur, tapi cara mengerjakan yang sudah ditolak beserta alasannya:
 
 ```text
-Puppeteer / Playwright-chromium untuk ekspor PDF   -- ADR-12
+Puppeteer / Playwright-chromium untuk ekspor PDF     -- ADR-12
 Normalisasi blok bersarang ke blocks.parent_block_id -- ADR-01
-dnd-kit di dalam DOM konten ProseMirror            -- ADR-11
-DndContext global di layout.tsx                     -- ADR-11
-pages.type baru untuk baris database                -- ADR-08
-FK cascade yang menghapus baris pages               -- ADR-10
-State view di React useState                        -- ADR-18
-Klien menulis database_rows.computed                -- ADR-03
+dnd-kit di dalam DOM konten ProseMirror              -- ADR-11
+DndContext global di layout.tsx                      -- ADR-11
+pages.type baru untuk baris database                 -- ADR-08
+FK cascade yang menghapus baris pages                -- ADR-10
+State view di React useState                         -- ADR-18
+Klien menulis database_rows.computed                 -- ADR-03
+Fetch ke host luar langsung dari browser             -- §29A.1, kebocoran privasi
+Fetch tanpa penjaga SSRF                             -- §29A.1
 ```
 
 Kalau sebuah task sepertinya membutuhkan salah satu di atas, berhenti dan tanyakan dulu —

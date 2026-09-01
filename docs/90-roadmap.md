@@ -289,7 +289,7 @@ Underline, highlight, warna teks, warna latar, superscript, subscript
 Callout, toggle list, toggle heading 1-3
 Columns 2-5 + geser lebar
 Table block (Tiptap table) + resize kolom + menu baris/kolom
-Code block: Shiki (bahasa terpilih, self-hosted), pemilih bahasa, salin, wrap
+Code block: Shiki (bahasa terpilih, lazy import), pemilih bahasa, salin, wrap
 KaTeX: equation block + inline equation, font disalin ke public/
 ```
 
@@ -298,7 +298,8 @@ KaTeX: equation block + inline equation, font disalin ke public/
 ```text
 Sub-page block, link-to-page block, breadcrumb block, table of contents
 Synced block (berbasis blockId stabil)
-File / video / audio / PDF block -- upload saja
+File / video / audio / PDF block (upload atau URL)
+Blok bookmark (pratinjau URL dari sisi server) + blok embed ber-sandbox
 Image: resize, align, caption, full-bleed
 pages.settings: full width, small text, font family, lock page, hitung kata
   (memindahkan full width & small text dari localStorage ke server)
@@ -402,7 +403,7 @@ Tabel reminders + notifications + settings
 Job @nestjs/schedule 30 detik + FOR UPDATE SKIP LOCKED + recurrence (date-fns)
 Reminder pada properti Date + mention @tanggal inline
 Inbox notifikasi (popover, badge, tandai dibaca, navigasi)
-Notifikasi browser lewat service worker, tanpa push service
+Notifikasi browser lewat service worker + Web Push (VAPID) untuk pengiriman latar
 Tampilan "Upcoming" lintas database
 ```
 
@@ -434,7 +435,8 @@ Tauri: notifikasi OS asli lewat poller lokal, global shortcut quick capture
 Indikator nilai computed basi + inspector outbox + UI konflik offline
 sw.js CACHE_VERSION + pembersihan + strategi network-first untuk /query
 Perluasan suite Playwright: drag, database, offline, import/export
-Audit: tes yang GAGAL bila ada request ke origin non-lokal (§29A.4)
+Notifikasi OS asli lewat poller lokal Tauri (alternatif Web Push di desktop)
+Tes: penjaga SSRF pada pengambil pratinjau, dan perilaku blok eksternal saat offline
 ```
 ---
 
