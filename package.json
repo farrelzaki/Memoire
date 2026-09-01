@@ -6,16 +6,18 @@
   "description": "Memoire — personal knowledge workspace (Notion-inspired, single-user)",
   "scripts": {
     "dev": "pnpm --parallel --filter @memoire/web --filter @memoire/api run dev",
-    "build": "pnpm -r run build",
-    "lint": "pnpm -r run lint",
-    "typecheck": "pnpm -r run typecheck",
-    "test": "pnpm -r run test",
-    "test:watch": "pnpm -r run test:watch",
+    "build": "pnpm -r --filter !@memoire/desktop run build",
+    "lint": "pnpm -r --filter !@memoire/desktop run lint",
+    "typecheck": "pnpm -r --filter !@memoire/desktop run typecheck",
+    "test": "pnpm -r --filter !@memoire/desktop run test",
+    "test:watch": "pnpm -r --filter !@memoire/desktop run test:watch",
     "db:migrate": "pnpm --filter @memoire/api run db:migrate",
     "db:generate": "pnpm --filter @memoire/api run db:generate",
     "db:studio": "pnpm --filter @memoire/api run db:studio",
     "infra:up": "docker compose up -d",
-    "infra:down": "docker compose down"
+    "infra:down": "docker compose down",
+    "desktop:dev": "pnpm --filter @memoire/desktop run dev",
+    "desktop:build": "pnpm --filter @memoire/desktop run build"
   },
   "engines": {
     "node": ">=20"
