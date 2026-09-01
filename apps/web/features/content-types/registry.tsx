@@ -1,3 +1,4 @@
+import dynamic from 'next/dynamic';
 import type { ComponentType } from 'react';
 import { DatabaseEditor } from '@/features/database/database-editor';
 import { DocumentEditor } from '@/features/editor/document-editor';
@@ -12,13 +13,11 @@ export interface ContentTypeDefinition {
   createInSidebar: boolean;
 }
 
-function DiagramPlaceholder() {
-  return (
-    <p className="text-sm text-zinc-400 dark:text-zinc-500">
-      Diagram pages arrive in Sprint 10.
-    </p>
-  );
-}
+// React Flow measures DOM nodes on mount — load it client-only, same as Excalidraw.
+const DiagramEditor = dynamic(
+  () => import('./diagram/diagram-editor').then((m) => m.DiagramEditor),
+  { ssr: false },
+);
 
 /**
  * Frontend content-type registry (§11A). Adding a new page type = adding one
@@ -51,7 +50,7 @@ export const contentTypes: Record<PageType, ContentTypeDefinition> = {
     key: 'diagram',
     label: 'Diagram',
     icon: '📊',
-    renderer: DiagramPlaceholder,
+    renderer: DiagramEditor,
     createInSidebar: true,
   },
 };

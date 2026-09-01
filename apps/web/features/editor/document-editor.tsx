@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { api, attachmentContentUrl } from '@/lib/api';
 import { blocksToDoc, docToBlocks, type TiptapDocument } from '@/lib/blocks';
 import type { Block } from '@/lib/types';
+import { MermaidBlock } from './mermaid-node';
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -99,6 +100,7 @@ function EditorInstance({
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder: "Type '/' for commands" }),
       Image.configure({ allowBase64: true }),
+      MermaidBlock,
     ],
     content: blocksToDoc(initialBlocks) as unknown as Content,
     editorProps: {
@@ -177,6 +179,11 @@ function EditorInstance({
           const url = window.prompt('Image URL');
           if (url) editor?.chain().focus().setImage({ src: url }).run();
         },
+      },
+      {
+        title: 'Mermaid Diagram',
+        hint: 'Diagram',
+        run: () => editor?.chain().focus().insertContent({ type: 'mermaid' }).run(),
       },
     ],
     [editor, pickImage],
