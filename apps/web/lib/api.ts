@@ -88,6 +88,8 @@ export interface CreatePageInput {
 
 export interface UpdatePageInput {
   title?: string;
+  icon?: string | null;
+  coverUrl?: string | null;
   isFavorite?: boolean;
 }
 
@@ -102,6 +104,13 @@ export const api = {
     request<Page>(`/pages/${id}/archive`, { method: 'POST' }),
   restorePage: (id: string) =>
     request<Page>(`/pages/${id}/restore`, { method: 'POST' }),
+  duplicatePage: (id: string) =>
+    request<Page>(`/pages/${id}/duplicate`, { method: 'POST' }),
+  /** Hard delete — only valid for pages already in Trash. */
+  permanentDeletePage: (id: string) =>
+    request<{ id: string; deleted: boolean }>(`/pages/${id}/permanent`, {
+      method: 'DELETE',
+    }),
   movePage: (
     id: string,
     body: { parentPageId?: string | null; position?: number },

@@ -1,6 +1,7 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { asc, eq, sql } from 'drizzle-orm';
-import { DRIZZLE_DB, DrizzleDB } from '../db/drizzle.provider';
+import { DRIZZLE_DB, DrizzleDB, DrizzleTx } from '../db/drizzle.provider';
+import { remapRowValues, remapViewConfig } from './duplicate.lib';
 import {
   Database,
   DatabaseProperty,
@@ -44,6 +45,80 @@ export class DatabasesService {
 
       return database;
     });
+  }
+
+  /**
+   * Copy the database behind `sourcePageId` onto `targetPageId` — properties,
+   * views, and rows included. Runs inside the caller's transaction so
+   * duplicating a database page is all-or-nothing (§7).
+   *
+   * Row `values` are keyed by property id, so they are remapped onto the new
+   * property ids rather than copied verbatim.
+   */
+  async duplicateForPage(
+    sourcePageId: string,
+    targetPageId: string,
+    tx: DrizzleTx,
+  ): Promise<void> {
+    const [source] = await tx
+      .select()
+      .from(databases)
+      .where(eq(databases.pageId, sourcePageId));
+    if (!source) return;
+
+    const [copy] = await tx
+      .insert(databases)
+      .values({ pageId: targetPageId, name: source.name })
+      .returning();
+
+    const properties = await tx
+      .select()
+      .from(databaseProperties)
+      .where(eq(databaseProperties.databaseId, source.id))
+      .orderBy(asc(databaseProperties.position));
+
+    const propertyIdMap = new Map<string, string>();
+    for (const property of properties) {
+      const [created] = await tx
+        .insert(databaseProperties)
+        .values({
+          databaseId: copy.id,
+          name: property.name,
+          type: property.type,
+          position: property.position,
+          config: property.config,
+        })
+        .returning();
+      propertyIdMap.set(property.id, created.id);
+    }
+
+    const views = await tx
+      .select()
+      .from(databaseViews)
+      .where(eq(databaseViews.databaseId, source.id))
+      .orderBy(asc(databaseViews.position));
+    for (const view of views) {
+      await tx.insert(databaseViews).values({
+        databaseId: copy.id,
+        name: view.name,
+        type: view.type,
+        position: view.position,
+        config: remapViewConfig(view.config, propertyIdMap),
+      });
+    }
+
+    const rows = await tx
+      .select()
+      .from(databaseRows)
+      .where(eq(databaseRows.databaseId, source.id))
+      .orderBy(asc(databaseRows.position));
+    for (const row of rows) {
+      await tx.insert(databaseRows).values({
+        databaseId: copy.id,
+        position: row.position,
+        values: remapRowValues(row.values, propertyIdMap),
+      });
+    }
   }
 
   async getByPage(pageId: string): Promise<DatabaseAggregate> {

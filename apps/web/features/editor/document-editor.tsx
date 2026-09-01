@@ -94,6 +94,10 @@ function EditorInstance({
   }, []);
 
   const editor = useEditor({
+    // The editor mounts inside a client component that Next still SSRs, so
+    // rendering the document on the server would hydrate against a different
+    // tree. Defer the first render to the client instead.
+    immediatelyRender: false,
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
       TaskList,
@@ -282,9 +286,11 @@ function EditorInstance({
 function SaveStatus({ state }: { state: SaveState }) {
   if (state === 'idle') return null;
   const label = state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : 'Failed to save';
-  const color =
-    state === 'error' ? 'text-red-500' : 'text-zinc-400';
-  return <div className={`absolute -top-6 right-0 text-xs ${color}`}>{label}</div>;
+  const color = state === 'error' ? 'text-red-500' : 'text-zinc-400';
+  // Pinned to the viewport rather than the editor box: the page header above
+  // varies in height with the cover/icon, so an editor-relative badge would
+  // land on the title on some pages and not others.
+  return <div className={`fixed bottom-4 right-5 z-40 text-xs ${color}`}>{label}</div>;
 }
 
 function SlashMenu({
@@ -371,11 +377,14 @@ function BlockHandle({
 }) {
   return (
     <>
+      {/* `coordsAtPos` returns viewport coordinates, so the handle must be
+          `fixed` — positioning it absolutely inside the editor made it drift
+          by whatever the page header above happened to be tall. */}
       <button
         onMouseDown={(e) => e.preventDefault()}
         onClick={onToggle}
-        className="absolute z-40 -ml-8 flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700"
-        style={{ top: handle.top - 60, left: handle.left - 28 }}
+        className="fixed z-40 flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        style={{ top: handle.top, left: handle.left - 32 }}
         title="Block menu"
       >
         ⋮⋮
@@ -384,7 +393,7 @@ function BlockHandle({
       {open && (
         <div
           className="fixed z-50 w-44 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
-          style={{ top: handle.top - 20, left: handle.left - 24 }}
+          style={{ top: handle.top + 24, left: handle.left - 32 }}
         >
           {items.slice(0, 5).map((item) => (
             <button
@@ -396,18 +405,18 @@ function BlockHandle({
               {item.title}
             </button>
           ))}
-          <div className="my-1 border-t border-zinc-200" />
+          <div className="my-1 border-t border-zinc-200 dark:border-zinc-700" />
           <button
             onMouseDown={(e) => e.preventDefault()}
             onClick={onDuplicate}
-            className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-600 hover:bg-zinc-100"
+            className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
           >
             Duplicate
           </button>
           <button
             onMouseDown={(e) => e.preventDefault()}
             onClick={onDelete}
-            className="block w-full rounded px-2 py-1 text-left text-sm text-red-600 hover:bg-red-50"
+            className="block w-full rounded px-2 py-1 text-left text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
           >
             Delete
           </button>

@@ -56,6 +56,18 @@ export class PagesController {
     return this.pagesService.restore(id);
   }
 
+  /** Deep-copy the page and its subtree (sidebar/page-menu "Duplicate"). */
+  @Post(':id/duplicate')
+  duplicate(@Param('id', ParseUUIDPipe) id: string) {
+    return this.pagesService.duplicate(id);
+  }
+
+  /** Hard delete from Trash — rejected unless the page is already archived. */
+  @Delete(':id/permanent')
+  permanentDelete(@Param('id', ParseUUIDPipe) id: string) {
+    return this.pagesService.permanentDelete(id);
+  }
+
   @Post(':id/move')
   move(
     @Param('id', ParseUUIDPipe) id: string,

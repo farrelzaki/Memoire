@@ -6,8 +6,8 @@ import {
 } from '@nestjs/common';
 import { eq, isNull, sql } from 'drizzle-orm';
 import { DatabasesService } from '../databases/databases.service';
-import { DRIZZLE_DB, DrizzleDB } from '../db/drizzle.provider';
-import { Page, PageType, pages } from '../db/schema';
+import { DRIZZLE_DB, DrizzleDB, DrizzleTx } from '../db/drizzle.provider';
+import { blocks, Page, pageCanvases, PageType, pages } from '../db/schema';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 export type CreatePageInput = {
@@ -106,6 +106,125 @@ export class PagesService {
     return page;
   }
 
+  /**
+   * Deep-copy a page and everything under it (§7 — one transaction, so a
+   * partial copy can never be left behind). Content is copied per content
+   * type: blocks for documents, the canvas row for whiteboard/diagram, and the
+   * full database for database pages.
+   *
+   * The copy is placed as the next sibling of the original, mirroring how
+   * "Duplicate" behaves in the sidebar.
+   */
+  async duplicate(id: string): Promise<Page> {
+    const source = await this.findOne(id);
+
+    return this.db.transaction(async (tx) => {
+      const position = await this.nextPosition(source.parentPageId, tx);
+      return this.copyPageTree(tx, source, source.parentPageId, {
+        title: `${source.title} (copy)`,
+        position,
+      });
+    });
+  }
+
+  /** Recursively copy `source` under `parentPageId`, returning the new page. */
+  private async copyPageTree(
+    tx: DrizzleTx,
+    source: Page,
+    parentPageId: string | null,
+    overrides?: { title?: string; position?: number },
+  ): Promise<Page> {
+    const [copy] = await tx
+      .insert(pages)
+      .values({
+        workspaceId: source.workspaceId,
+        parentPageId,
+        title: overrides?.title ?? source.title,
+        icon: source.icon,
+        coverUrl: source.coverUrl,
+        type: source.type,
+        // A duplicate starts out un-favorited; favorites are a manual choice.
+        isFavorite: false,
+        isArchived: source.isArchived,
+        position: overrides?.position ?? source.position,
+      })
+      .returning();
+
+    const sourceBlocks = await tx
+      .select()
+      .from(blocks)
+      .where(eq(blocks.pageId, source.id))
+      .orderBy(sql`${blocks.position} asc`);
+    for (const block of sourceBlocks) {
+      await tx.insert(blocks).values({
+        pageId: copy.id,
+        type: block.type,
+        position: block.position,
+        content: block.content,
+        properties: block.properties,
+      });
+    }
+
+    const [canvas] = await tx
+      .select()
+      .from(pageCanvases)
+      .where(eq(pageCanvases.pageId, source.id));
+    if (canvas) {
+      await tx.insert(pageCanvases).values({
+        pageId: copy.id,
+        canvasKind: canvas.canvasKind,
+        elements: canvas.elements,
+        viewport: canvas.viewport,
+      });
+    }
+
+    if (source.type === 'database') {
+      await this.databasesService.duplicateForPage(source.id, copy.id, tx);
+    }
+
+    const children = await tx
+      .select()
+      .from(pages)
+      .where(eq(pages.parentPageId, source.id))
+      .orderBy(sql`${pages.position} asc`);
+    for (const child of children) {
+      await this.copyPageTree(tx, child, copy.id);
+    }
+
+    return copy;
+  }
+
+  /**
+   * Hard delete from Trash (§32) — only reachable for an already-archived
+   * page, so a single click can never destroy a live page. Blocks, canvases,
+   * and databases cascade at the FK level; child pages do not, so the tree is
+   * deleted depth-first inside one transaction.
+   */
+  async permanentDelete(id: string): Promise<{ id: string; deleted: boolean }> {
+    const page = await this.findOne(id);
+    if (!page.isArchived) {
+      throw new BadRequestException(
+        'Only archived pages can be permanently deleted — move it to Trash first',
+      );
+    }
+
+    await this.db.transaction(async (tx) => {
+      await this.deletePageTree(tx, id);
+    });
+    return { id, deleted: true };
+  }
+
+  private async deletePageTree(tx: DrizzleTx, id: string): Promise<void> {
+    const children = await tx
+      .select({ id: pages.id })
+      .from(pages)
+      .where(eq(pages.parentPageId, id));
+    for (const child of children) {
+      await this.deletePageTree(tx, child.id);
+    }
+    await tx.delete(pages).where(eq(pages.id, id));
+  }
+
   async move(
     id: string,
     parentPageId?: string | null,
@@ -138,8 +257,11 @@ export class PagesService {
   }
 
   /** Next sibling position for a parent (root when `parentId` is null). */
-  private async nextPosition(parentId: string | null): Promise<number> {
-    const rows = await this.db
+  private async nextPosition(
+    parentId: string | null,
+    tx: DrizzleTx | DrizzleDB = this.db,
+  ): Promise<number> {
+    const rows = await tx
       .select({ max: sql<number>`coalesce(max(${pages.position}), -1)` })
       .from(pages)
       .where(

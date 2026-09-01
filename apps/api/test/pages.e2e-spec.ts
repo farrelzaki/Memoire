@@ -34,6 +34,12 @@ describe('Pages (e2e)', () => {
     archive: vi.fn(async () => ({ ...pageFixture, isArchived: true })),
     restore: vi.fn(async () => ({ ...pageFixture, isArchived: false })),
     move: vi.fn(async () => pageFixture),
+    duplicate: vi.fn(async () => ({
+      ...pageFixture,
+      id: '33333333-3333-3333-3333-333333333333',
+      title: 'Untitled (copy)',
+    })),
+    permanentDelete: vi.fn(async () => ({ id: pageFixture.id, deleted: true })),
   };
 
   beforeAll(async () => {
@@ -87,5 +93,26 @@ describe('Pages (e2e)', () => {
       .post(`/api/pages/${pageFixture.id}/restore`)
       .expect(201);
     expect(res.body).toMatchObject({ isArchived: false });
+  });
+
+  it('POST /api/pages/:id/duplicate returns the copy, not the original', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/pages/${pageFixture.id}/duplicate`)
+      .expect(201);
+    expect(pagesService.duplicate).toHaveBeenCalledWith(pageFixture.id);
+    expect(res.body.id).not.toBe(pageFixture.id);
+    expect(res.body).toMatchObject({ title: 'Untitled (copy)' });
+  });
+
+  it('DELETE /api/pages/:id/permanent hard-deletes from Trash', async () => {
+    const res = await request(app.getHttpServer())
+      .delete(`/api/pages/${pageFixture.id}/permanent`)
+      .expect(200);
+    expect(pagesService.permanentDelete).toHaveBeenCalledWith(pageFixture.id);
+    expect(res.body).toMatchObject({ deleted: true });
+  });
+
+  it('DELETE /api/pages/:id/permanent rejects a non-uuid id', async () => {
+    await request(app.getHttpServer()).delete('/api/pages/not-a-uuid/permanent').expect(400);
   });
 });
