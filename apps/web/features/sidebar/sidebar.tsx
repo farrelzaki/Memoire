@@ -4,7 +4,12 @@ import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { Menu, MenuItem } from '@/components/ui/menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { contentTypes } from '@/features/content-types/registry';
 import { TrashDialog } from '@/features/trash/trash-dialog';
 import { useCreatePage } from '@/hooks/use-create-page';
@@ -35,7 +40,6 @@ export function Sidebar() {
   const width = useSidebarStore((s) => s.width);
   const setWidth = useSidebarStore((s) => s.setWidth);
 
-  const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
 
   const { data: pages = [] } = useQuery({ queryKey: ['pages'], queryFn: api.listPages });
@@ -120,32 +124,29 @@ export function Sidebar() {
           <Section
             title="Private"
             action={
-              <div className="relative">
-                <button
-                  onClick={() => setNewMenuOpen((v) => !v)}
-                  title="New page"
-                  className="flex h-5 w-5 items-center justify-center rounded text-zinc-400 hover:bg-zinc-300/60 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-                >
-                  +
-                </button>
-                {newMenuOpen && (
-                  <Menu onClose={() => setNewMenuOpen(false)} align="right">
-                    {Object.values(contentTypes)
-                      .filter((ct) => ct.createInSidebar)
-                      .map((ct) => (
-                        <MenuItem
-                          key={ct.key}
-                          icon={ct.icon}
-                          label={ct.label}
-                          onClick={() => {
-                            createPage.mutate({ type: ct.key });
-                            setNewMenuOpen(false);
-                          }}
-                        />
-                      ))}
-                  </Menu>
-                )}
-              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    title="New page"
+                    className="flex h-5 w-5 items-center justify-center rounded text-zinc-400 hover:bg-zinc-300/60 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+                  >
+                    +
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {Object.values(contentTypes)
+                    .filter((ct) => ct.createInSidebar)
+                    .map((ct) => (
+                      <DropdownMenuItem
+                        key={ct.key}
+                        onClick={() => createPage.mutate({ type: ct.key })}
+                      >
+                        <span className="w-4 shrink-0 text-center text-zinc-400">{ct.icon}</span>
+                        {ct.label}
+                      </DropdownMenuItem>
+                    ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             }
           >
             {tree.length === 0 ? (

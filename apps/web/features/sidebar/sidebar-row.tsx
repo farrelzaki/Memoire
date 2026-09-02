@@ -4,10 +4,17 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { Menu, MenuItem, MenuSeparator } from '@/components/ui/menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { api } from '@/lib/api';
 import type { PageTreeNode } from '@/lib/pages';
 import { useSidebarStore } from '@/stores/sidebar';
+import { toastWithUndo } from '@/stores/toast';
 
 /**
  * One page row in the sidebar tree: disclosure chevron, icon, title, and the
@@ -26,7 +33,6 @@ export function SidebarRow({
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
 
   const expandedIds = useSidebarStore((s) => s.expanded);
@@ -61,6 +67,9 @@ export function SidebarRow({
     onSuccess: () => {
       invalidate();
       if (isActive) router.push('/');
+      toastWithUndo(`"${node.title || 'Untitled'}" moved to Trash`, () => {
+        api.restorePage(node.id).then(invalidate);
+      });
     },
   });
 
@@ -122,56 +131,40 @@ export function SidebarRow({
 
         {!renaming && (
           <div className="flex shrink-0 items-center opacity-0 focus-within:opacity-100 group-hover/row:opacity-100">
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setMenuOpen((v) => !v)}
-                title="Page options"
-                className="flex h-5 w-5 items-center justify-center rounded text-zinc-400 hover:bg-zinc-300/60 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-              >
-                ⋯
-              </button>
-              {menuOpen && (
-                <Menu onClose={() => setMenuOpen(false)} align="right">
-                  <MenuItem
-                    icon="✎"
-                    label="Rename"
-                    onClick={() => {
-                      setRenaming(true);
-                      setMenuOpen(false);
-                    }}
-                  />
-                  <MenuItem
-                    icon="⧉"
-                    label="Duplicate"
-                    onClick={() => {
-                      duplicate.mutate();
-                      setMenuOpen(false);
-                    }}
-                  />
-                  <MenuItem
-                    icon="🔗"
-                    label="Copy link"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(
-                        `${window.location.origin}/${node.id}`,
-                      );
-                      setMenuOpen(false);
-                    }}
-                  />
-                  <MenuSeparator />
-                  <MenuItem
-                    icon="🗑"
-                    label="Move to Trash"
-                    danger
-                    onClick={() => {
-                      archive.mutate();
-                      setMenuOpen(false);
-                    }}
-                  />
-                </Menu>
-              )}
-            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  title="Page options"
+                  className="flex h-5 w-5 items-center justify-center rounded text-zinc-400 hover:bg-zinc-300/60 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+                >
+                  ⋯
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setRenaming(true)}>
+                  <span className="w-4 shrink-0 text-center text-zinc-400">✎</span>
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => duplicate.mutate()}>
+                  <span className="w-4 shrink-0 text-center text-zinc-400">⧉</span>
+                  Duplicate
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() =>
+                    void navigator.clipboard.writeText(`${window.location.origin}/${node.id}`)
+                  }
+                >
+                  <span className="w-4 shrink-0 text-center text-zinc-400">🔗</span>
+                  Copy link
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem danger onClick={() => archive.mutate()}>
+                  <span className="w-4 shrink-0 text-center">🗑</span>
+                  Move to Trash
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <button
               type="button"

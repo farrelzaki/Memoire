@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { Fragment, useState } from 'react';
+import { Fragment } from 'react';
+import { DropdownMenu, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { api } from '@/lib/api';
 import { getBreadcrumbTrail } from '@/lib/pages';
 import type { Page } from '@/lib/types';
@@ -16,7 +17,6 @@ import { PageMenu } from './page-menu';
  */
 export function Topbar({ page }: { page: Page }) {
   const queryClient = useQueryClient();
-  const [menuOpen, setMenuOpen] = useState(false);
   const collapsed = useSidebarStore((s) => s.collapsed);
   const toggleSidebar = useSidebarStore((s) => s.toggle);
 
@@ -73,16 +73,17 @@ export function Topbar({ page }: { page: Page }) {
           {page.isFavorite ? '★' : '☆'}
         </button>
 
-        <div className="relative">
-          <button
-            onClick={() => setMenuOpen((v) => !v)}
-            title="Page options"
-            className="rounded px-1.5 py-0.5 text-sm text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-          >
-            ⋯
-          </button>
-          {menuOpen && <PageMenu page={page} onClose={() => setMenuOpen(false)} />}
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              title="Page options"
+              className="rounded px-1.5 py-0.5 text-sm text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+            >
+              ⋯
+            </button>
+          </DropdownMenuTrigger>
+          <PageMenu page={page} />
+        </DropdownMenu>
       </div>
     </div>
   );

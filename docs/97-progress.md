@@ -13,14 +13,17 @@ supaya jadi log historis. Sprint yang sedang berjalan ditulis paling detail.
 
 ## Status Ringkas
 
-**Sprint 13 — Fondasi: Identitas & Kontrak: semua item checklist di bawah sudah `[x]`.**
+**Sprint 13 — Fondasi: Identitas & Kontrak: selesai, semua item `[x]`.**
+**Sprint 14 — Primitif UI: semua item checklist di bawah sudah `[x]`** (dengan beberapa
+sub-bagian yang sengaja ditunda — lihat detail di bawah).
 Sprint 1–12 + iterasi "app shell ala Notion" sudah selesai (commit `13a6bd5`, `2a6608c`).
 
-Belum di-commit — kerja Sprint 13 masih di working tree (belum ada commit "sprint 13").
-Jalankan `git status` untuk lihat file yang berubah. Kalau user minta commit, pakai
-pesan `feat: sprint 13 — identitas blok, UUID klien, dan tiga registry`, lalu **pindah
-status ringkas ini ke Sprint 14** (§14, `docs/90-roadmap.md`) dan mulai checklist baru
-di bawah — jangan hapus checklist Sprint 13, biarkan sebagai log historis.
+Belum di-commit — kerja Sprint 13 + 14 masih di working tree (belum ada commit untuk
+keduanya). Jalankan `git status` untuk lihat file yang berubah. Kalau user minta commit,
+pisahkan jadi dua commit (`feat: sprint 13 — identitas blok, UUID klien, dan tiga
+registry` lalu `feat: sprint 14 — primitif UI (Radix, design token, toast/undo)`), lalu
+**pindah status ringkas ini ke Sprint 15** (§15, `docs/90-roadmap.md`) dan mulai checklist
+baru di bawah — jangan hapus checklist sprint yang sudah selesai, biarkan sebagai log historis.
 
 ---
 
@@ -92,7 +95,7 @@ di bawah — jangan hapus checklist Sprint 13, biarkan sebagai log historis.
         (sebelumnya cuma kebawa transitif lewat `@memoire/validation`) supaya
         `property-type-registry.ts`/`view-type-registry.ts` bisa jalan di Vitest.
 
-### Verifikasi terakhir (state di atas)
+### Verifikasi terakhir (state Sprint 13)
 
 ```
 pnpm typecheck   → PASS (packages/validation, apps/api, apps/web)
@@ -107,17 +110,110 @@ Itu race teardown tinypool yang flaky, bukan test yang gagal — jalankan
 
 ---
 
+## Sprint 14 — Checklist Detail
+
+Tidak ada browser tool yang dimuat di sesi ini, jadi tidak ada UI yang diverifikasi
+visual — verifikasi dilakukan lewat `pnpm typecheck`, `pnpm test`, dan `pnpm build`
+(build produksi Next.js benar-benar meng-compile dan mem-prerender tiap route, jadi ini
+jaring pengaman paling kuat yang tersedia tanpa browser). **Kalau sesi berikutnya punya
+akses browser, jalankan app-nya dan coba tiap primitive sebelum menganggap semuanya
+benar-benar oke secara visual** — apa yang tercatat di sini adalah "compiles and builds
+correctly", bukan "terlihat benar di layar".
+
+- [x] **shadcn/ui-style Radix primitives** — `apps/web/components/ui/`: `dialog.tsx`,
+      `popover.tsx`, `dropdown-menu.tsx`, `context-menu.tsx`, `tooltip.tsx`, `select.tsx`,
+      `checkbox.tsx`, `tabs.tsx`, `scroll-area.tsx`, `toast.tsx` + `toaster.tsx`,
+      `command.tsx`. Semua pakai `cn()` (`apps/web/lib/cn.ts`, `clsx` + `tailwind-merge`)
+      dan token warna dari §34 (lihat item design token di bawah). `TooltipProvider`
+      dipasang di `app/providers.tsx`.
+- [x] **lucide-react** terpasang dan dipakai di primitive-primitive di atas (X, Check,
+      ChevronRight/Down/Up, Circle, CalendarIcon, Search). Emoji tetap dipakai untuk page
+      icon dan ikon di menu yang sudah ada — sesuai instruksi roadmap, ini bukan
+      penggantian semua ikon di app.
+- [x] **dnd-kit terpasang** (`@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`)
+      + helper posisi pecahan di `apps/web/lib/position.ts` (`fractionalPosition`,
+      `needsRenormalization`, `renormalizePositions`) sesuai algoritma §19A.4 (rata-rata
+      tetangga, renormalisasi kalau jarak sudah terlalu kecil). Test: `position.spec.ts`.
+      **Belum dikerjakan dengan sengaja**: memasang `DndContext` di sidebar/database —
+      itu memang pekerjaan Sprint 21/22 per roadmap, bukan Sprint 14.
+- [x] **date-fns + DatePicker berbasis Radix** — `apps/web/components/ui/date-picker.tsx`.
+      `Calendar` adalah grid bulan buatan sendiri dari `date-fns` (bukan `react-day-picker`
+      — sengaja tidak menambah dependency lagi untuk ini), `DatePicker` membungkusnya
+      dengan `Popover`. Belum dipasang ke `Cell` properti `date` di database (itu bagian
+      dari refactor `PropertyTypeRegistry` yang ditunda ke Sprint 18/21, lihat catatan
+      Sprint 13).
+- [x] **Migrasi `components/ui/menu.tsx` → `DropdownMenu`.** File lama **dihapus**
+      (`useClickOutside`, `MenuItem`, dst — tidak dipakai lagi, dan CLAUDE.md bilang hapus
+      total kalau memang tidak dipakai). Tiga pemakainya dipindah:
+      - `features/sidebar/sidebar-row.tsx` — menu `⋯` per halaman.
+      - `features/sidebar/sidebar.tsx` — menu "+" (New page, dari `ContentTypeRegistry`).
+      - `features/shell/page-menu.tsx` + `features/shell/topbar.tsx` — menu `⋯` topbar.
+        Sub-menu "Move to…" yang tadinya state machine manual (`moveOpen`/`onBack`)
+        sekarang `DropdownMenuSub` bawaan Radix (flyout hover), lebih sederhana dan lebih
+        sesuai konvensi Radix daripada state buatan sendiri.
+- [x] **Toast + snackbar "Urungkan"** — `stores/toast.ts` (Zustand, non-persisted;
+      `toast()` dan `toastWithUndo()` bisa dipanggil dari mana saja tanpa hook) +
+      `components/ui/toaster.tsx` dipasang di `app/layout.tsx`. **Sudah dipakai nyata**,
+      bukan cuma infrastruktur: archive page di `sidebar-row.tsx` dan `page-menu.tsx`
+      sekarang menampilkan toast "Urungkan" yang memanggil `api.restorePage` kalau
+      diklik. Test: `stores/toast.spec.ts`.
+- [x] **`ConfirmDialog`** — `components/ui/confirm-dialog.tsx`, generik (title/description/
+      confirm/cancel/danger). **Belum ada pemakainya** — permanent-delete di
+      `trash-dialog.tsx` sudah punya pola konfirmasi inline sendiri yang berfungsi baik
+      (dua tombol muncul di tempat, bukan modal); tidak dipaksa migrasi karena tidak ada
+      yang rusak dan mengganti UX yang sudah baik tanpa bisa diverifikasi visual itu
+      berisiko murni. Pemakai pertamanya kemungkinan besar fitur baru yang butuh
+      konfirmasi blocking sungguhan (mis. "Delete database" — §CLAUDE.md daftar operasi
+      hard-to-reverse).
+- [x] **`CommandDialog`** — `components/ui/command.tsx` (`cmdk` + `Dialog`). **Belum
+      menggantikan** `features/command-palette/command-palette.tsx` yang sudah ada dan
+      berfungsi (custom implementation dengan keyboard shortcut ⌘K sendiri) — migrasi itu
+      juga ditunda dengan alasan yang sama seperti `ConfirmDialog`: berisiko tanpa
+      verifikasi visual, dan bukan item yang secara eksplisit diminta roadmap untuk
+      sprint ini (roadmap cuma minta primitive-nya *ada*).
+- [x] **Design token Tailwind** — CSS variable di `app/globals.css` (`:root` + `.dark`,
+      §34: background/foreground/primary/secondary/muted/accent/destructive/border/
+      input/ring/radius dalam HSL) + `tailwind.config.ts` memetakannya ke
+      `hsl(var(--...))` plus plugin `tailwindcss-animate`. **Sengaja tidak menyentuh**
+      skala spacing/typography Tailwind (tetap default) dan **tidak** retrofit warna
+      hardcoded zinc-* di layar yang sudah ada (`document-editor.tsx`, `sidebar.tsx`,
+      dst) — itu migrasi besar lintas-file yang tidak bisa diverifikasi visual di sesi
+      ini; primitive baru di `components/ui/` sudah membaca dari token, layar lama
+      migrasi bertahap saat disentuh untuk alasan lain.
+
+### Verifikasi terakhir (state Sprint 14)
+
+```
+pnpm typecheck        → PASS (packages/validation, apps/api, apps/web)
+pnpm --filter @memoire/web test    → PASS (17 files / 97 tests)
+pnpm --filter @memoire/web build   → PASS (next build — compiles + prerenders semua route)
+pnpm --filter @memoire/api test    → PASS (14 files / 62 tests)
+pnpm --filter @memoire/validation test → PASS (1 file / 5 tests)
+```
+
+`apps/web/package.json` bertambah banyak dependency baru sekaligus (lihat diff) —
+semua paket Radix yang dipakai di atas, `class-variance-authority`, `clsx`,
+`tailwind-merge`, `tailwindcss-animate`, `cmdk`, `lucide-react`, `date-fns`,
+`@dnd-kit/*`. `pnpm install` sudah dijalankan, lockfile sudah up to date.
+
+---
+
 ## Cara Lanjut
 
-1. Baca bagian "Sprint 13 — Checklist Detail" di atas, kerjakan dari item pertama
+1. Baca checklist sprint aktif di atas (yang paling bawah), kerjakan dari item pertama
    yang masih `[ ]`.
 2. Setelah satu item selesai: update checklist ini (`[x]`), jalankan `pnpm typecheck`
-   dan `pnpm test`, lalu commit dengan pesan sesuai konvensi (`feat:`, `test:`, dst).
-3. Kalau sudah semua item Sprint 13 `[x]`: commit final Sprint 13, lalu pindah
-   status ringkas di atas ke **Sprint 14 — Primitif UI** dan mulai checklist baru
-   untuk sprint itu berdasarkan `docs/90-roadmap.md` §14.
+   dan `pnpm test` (dan `pnpm build` untuk apps/web kalau perubahannya UI), lalu commit
+   dengan pesan sesuai konvensi (`feat:`, `test:`, dst).
+3. Kalau sudah semua item sprint aktif `[x]`: commit final sprint itu, lalu pindah
+   status ringkas di atas ke sprint berikutnya dan mulai checklist baru berdasarkan
+   seksi yang sesuai di `docs/90-roadmap.md`.
 4. Kalau ada keputusan arsitektur baru yang diambil selama mengerjakan sprint,
    tambahkan entri ADR di `docs/96-decisions.md` — jangan cuma dicatat di sini.
+5. **Kalau sesi berikutnya punya akses browser** (Chrome tool dimuat): sebelum menganggap
+   Sprint 14 benar-benar selesai, jalankan `pnpm dev` dan coba tiap primitive baru
+   (dropdown menu di sidebar/topbar, toast undo, date picker) secara visual — sprint ini
+   diverifikasi lewat typecheck/test/build saja, belum lewat mata.
 
 Jangan re-audit kode dari nol kalau file ini sudah ada dan terlihat up to date —
 percayai isinya kecuali ada tanda jelas sudah basi (mis. commit baru yang tidak

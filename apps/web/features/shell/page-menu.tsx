@@ -2,22 +2,30 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-import { Menu, MenuItem, MenuLabel, MenuSeparator } from '@/components/ui/menu';
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from '@/components/ui/dropdown-menu';
 import { api } from '@/lib/api';
 import { downloadJson } from '@/lib/download';
 import { getSubtreeIds } from '@/lib/pages';
 import type { Page } from '@/lib/types';
 import { usePagePref, usePagePrefsStore } from '@/stores/page-prefs';
+import { toastWithUndo } from '@/stores/toast';
 
 /**
  * The page `⋯` menu — the per-page action surface Notion puts in the topbar:
- * layout toggles, duplicate, move, copy link, export, and delete.
+ * layout toggles, duplicate, move, copy link, export, and delete. Rendered
+ * as the content of a `DropdownMenu` whose trigger lives in `topbar.tsx`.
  */
-export function PageMenu({ page, onClose }: { page: Page; onClose: () => void }) {
+export function PageMenu({ page }: { page: Page }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [moveOpen, setMoveOpen] = useState(false);
 
   const prefs = usePagePref(page.id);
   const toggleFullWidth = usePagePrefsStore((s) => s.toggleFullWidth);
@@ -33,7 +41,6 @@ export function PageMenu({ page, onClose }: { page: Page; onClose: () => void })
     onSuccess: (copy) => {
       invalidate();
       router.push(`/${copy.id}`);
-      onClose();
     },
   });
 
@@ -42,77 +49,85 @@ export function PageMenu({ page, onClose }: { page: Page; onClose: () => void })
     onSuccess: () => {
       invalidate();
       router.push('/');
-      onClose();
+      toastWithUndo(`"${page.title || 'Untitled'}" moved to Trash`, () => {
+        api.restorePage(page.id).then(invalidate);
+      });
     },
   });
 
   const favorite = useMutation({
     mutationFn: () => api.updatePage(page.id, { isFavorite: !page.isFavorite }),
-    onSuccess: () => {
-      invalidate();
-      onClose();
-    },
+    onSuccess: invalidate,
   });
-
-  const copyLink = async () => {
-    await navigator.clipboard.writeText(`${window.location.origin}/${page.id}`);
-    onClose();
-  };
 
   const exportPage = async () => {
     const blocks = page.type === 'document' ? await api.listBlocks(page.id) : [];
     downloadJson(`${page.title || 'untitled'}.json`, { page, blocks });
-    onClose();
   };
 
-  if (moveOpen) {
-    return <MoveToMenu page={page} onDone={onClose} onBack={() => setMoveOpen(false)} />;
-  }
-
   return (
-    <Menu onClose={onClose} align="right">
-      <MenuItem
-        icon={page.isFavorite ? '★' : '☆'}
-        label={page.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
-        onClick={() => favorite.mutate()}
-      />
-      <MenuSeparator />
-      <MenuItem
-        icon="↔"
-        label="Full width"
-        hint={prefs.fullWidth ? 'On' : 'Off'}
+    <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuItem onClick={() => favorite.mutate()}>
+        <span className="w-4 shrink-0 text-center text-zinc-400">
+          {page.isFavorite ? '★' : '☆'}
+        </span>
+        {page.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        onSelect={(e) => e.preventDefault()}
         onClick={() => toggleFullWidth(page.id)}
-      />
-      <MenuItem
-        icon="A"
-        label="Small text"
-        hint={prefs.smallText ? 'On' : 'Off'}
+      >
+        <span className="w-4 shrink-0 text-center text-zinc-400">↔</span>
+        Full width
+        <span className="ml-auto text-xs text-zinc-400">{prefs.fullWidth ? 'On' : 'Off'}</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onSelect={(e) => e.preventDefault()}
         onClick={() => toggleSmallText(page.id)}
-      />
-      <MenuSeparator />
-      <MenuItem icon="⧉" label="Duplicate" onClick={() => duplicate.mutate()} />
-      <MenuItem icon="→" label="Move to…" onClick={() => setMoveOpen(true)} />
-      <MenuItem icon="🔗" label="Copy link" onClick={() => void copyLink()} />
-      <MenuItem icon="⭳" label="Export" onClick={() => void exportPage()} />
-      <MenuSeparator />
-      <MenuItem icon="🗑" label="Move to Trash" danger onClick={() => archive.mutate()} />
-    </Menu>
+      >
+        <span className="w-4 shrink-0 text-center text-zinc-400">A</span>
+        Small text
+        <span className="ml-auto text-xs text-zinc-400">{prefs.smallText ? 'On' : 'Off'}</span>
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onClick={() => duplicate.mutate()}>
+        <span className="w-4 shrink-0 text-center text-zinc-400">⧉</span>
+        Duplicate
+      </DropdownMenuItem>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <span className="w-4 shrink-0 text-center text-zinc-400">→</span>
+          Move to…
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
+          <MoveToItems page={page} />
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      <DropdownMenuItem
+        onClick={() => void navigator.clipboard.writeText(`${window.location.origin}/${page.id}`)}
+      >
+        <span className="w-4 shrink-0 text-center text-zinc-400">🔗</span>
+        Copy link
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={() => void exportPage()}>
+        <span className="w-4 shrink-0 text-center text-zinc-400">⭳</span>
+        Export
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem danger onClick={() => archive.mutate()}>
+        <span className="w-4 shrink-0 text-center">🗑</span>
+        Move to Trash
+      </DropdownMenuItem>
+    </DropdownMenuContent>
   );
 }
 
 /**
- * Destination picker for "Move to". A page's own subtree is excluded — the
+ * Destination list for "Move to…". A page's own subtree is excluded — the
  * backend rejects those moves, so they should never be offered.
  */
-function MoveToMenu({
-  page,
-  onDone,
-  onBack,
-}: {
-  page: Page;
-  onDone: () => void;
-  onBack: () => void;
-}) {
+function MoveToItems({ page }: { page: Page }) {
   const queryClient = useQueryClient();
   const { data: pages = [] } = useQuery({ queryKey: ['pages'], queryFn: api.listPages });
 
@@ -121,7 +136,6 @@ function MoveToMenu({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pages'] });
       queryClient.invalidateQueries({ queryKey: ['page', page.id] });
-      onDone();
     },
   });
 
@@ -129,28 +143,28 @@ function MoveToMenu({
   const targets = pages.filter((p) => !p.isArchived && !excluded.has(p.id));
 
   return (
-    <Menu onClose={onDone} align="right" className="max-h-80 overflow-y-auto">
-      <MenuItem icon="‹" label="Back" onClick={onBack} />
-      <MenuSeparator />
-      <MenuLabel>Move to</MenuLabel>
-      <MenuItem
-        icon="🏠"
-        label="Workspace (top level)"
+    <>
+      <DropdownMenuLabel>Move to</DropdownMenuLabel>
+      <DropdownMenuItem
         disabled={page.parentPageId === null}
         onClick={() => move.mutate(null)}
-      />
+      >
+        <span className="w-4 shrink-0 text-center text-zinc-400">🏠</span>
+        Workspace (top level)
+      </DropdownMenuItem>
       {targets.map((target) => (
-        <MenuItem
+        <DropdownMenuItem
           key={target.id}
-          icon={target.icon ?? '📄'}
-          label={target.title || 'Untitled'}
           disabled={target.id === page.parentPageId}
           onClick={() => move.mutate(target.id)}
-        />
+        >
+          <span className="w-4 shrink-0 text-center text-zinc-400">{target.icon ?? '📄'}</span>
+          {target.title || 'Untitled'}
+        </DropdownMenuItem>
       ))}
       {targets.length === 0 && (
         <p className="px-2 py-1.5 text-sm text-zinc-400">No other pages.</p>
       )}
-    </Menu>
+    </>
   );
 }

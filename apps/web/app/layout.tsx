@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { KeyboardShortcuts } from '@/components/keyboard-shortcuts';
 import { OfflineManager } from '@/components/offline-manager';
+import { Toaster } from '@/components/ui/toaster';
 import { CommandPalette } from '@/features/command-palette/command-palette';
 import { Sidebar } from '@/features/sidebar/sidebar';
 import { Providers } from './providers';
@@ -33,6 +34,7 @@ export default function RootLayout({
           </div>
           <CommandPalette />
           <OfflineManager />
+          <Toaster />
         </Providers>
       </body>
     </html>
