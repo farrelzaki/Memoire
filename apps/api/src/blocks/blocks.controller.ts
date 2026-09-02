@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Put } from '@nestjs/common';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { BlocksService } from './blocks.service';
-import { SyncBlocksDto, syncBlocksSchema } from './blocks.schema';
+import { ReplaceBlocksDto, replaceBlocksSchema } from './blocks.schema';
 
 @Controller('pages/:pageId/blocks')
 export class BlocksController {
@@ -15,7 +15,7 @@ export class BlocksController {
   @Put()
   replace(
     @Param('pageId', ParseUUIDPipe) pageId: string,
-    @Body(new ZodValidationPipe(syncBlocksSchema)) body: SyncBlocksDto,
+    @Body(new ZodValidationPipe(replaceBlocksSchema)) body: ReplaceBlocksDto,
   ) {
     return this.blocksService.replace(pageId, body.blocks);
   }

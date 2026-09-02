@@ -5,6 +5,7 @@
   "packageManager": "pnpm@11.24.0",
   "description": "Memoire — personal knowledge workspace (Notion-inspired, single-user)",
   "scripts": {
+    "postinstall": "pnpm --filter @memoire/validation run build",
     "dev": "pnpm --parallel --filter @memoire/web --filter @memoire/api run dev",
     "build": "pnpm -r --filter !@memoire/desktop run build",
     "lint": "pnpm -r --filter !@memoire/desktop run lint",

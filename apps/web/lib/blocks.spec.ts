@@ -31,25 +31,31 @@ describe('doc <-> blocks', () => {
     const doc = {
       type: 'doc' as const,
       content: [
-        { type: 'paragraph', content: [{ type: 'text', text: 'hi' }] },
-        { type: 'horizontalRule' },
+        { type: 'paragraph', attrs: { blockId: 'p1' }, content: [{ type: 'text', text: 'hi' }] },
+        { type: 'horizontalRule', attrs: { blockId: 'hr1' } },
       ],
     };
     const blocks = docToBlocks(doc);
     expect(blocks).toHaveLength(2);
-    expect(blocks[0].type).toBe('paragraph');
-    expect(blocks[1].type).toBe('horizontalRule');
+    expect(blocks[0]).toMatchObject({ id: 'p1', type: 'paragraph' });
+    expect(blocks[1]).toMatchObject({ id: 'hr1', type: 'horizontalRule' });
+  });
+
+  it('throws when a top-level node is missing attrs.blockId', () => {
+    const doc = {
+      type: 'doc' as const,
+      content: [{ type: 'paragraph' }],
+    };
+    expect(() => docToBlocks(doc)).toThrow(/blockId/);
   });
 
   it('round-trips without losing top-level nodes', () => {
     const doc = {
       type: 'doc' as const,
-      content: [{ type: 'codeBlock', content: [{ type: 'text', text: 'x' }] }],
+      content: [{ type: 'codeBlock', attrs: { blockId: 'c1' }, content: [{ type: 'text', text: 'x' }] }],
     };
     const blocks = docToBlocks(doc);
-    const payloadBlocks = blocks.map((b, i) =>
-      makeBlock({ id: String(i), content: b.content }),
-    );
+    const payloadBlocks = blocks.map((b) => makeBlock({ id: b.id, content: b.content }));
     expect(blocksToDoc(payloadBlocks).content).toEqual(doc.content);
   });
 });

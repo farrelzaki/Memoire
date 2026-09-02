@@ -1,9 +1,10 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { and, eq, notInArray, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB, DrizzleDB } from '../db/drizzle.provider';
 import { Block, blocks } from '../db/schema';
 import { PagesService } from '../pages/pages.service';
-import { BlockDto } from './blocks.schema';
+import { collectDescendantBlockIds } from './block-tree.lib';
+import { BlockPayloadDto } from './blocks.schema';
 
 @Injectable()
 export class BlocksService {
@@ -21,30 +22,68 @@ export class BlocksService {
       .orderBy(sql`${blocks.position} asc`);
   }
 
+  /** Find a block by id, whether it's a top-level row or nested inside one (§11E.4). */
+  async findById(id: string): Promise<Block> {
+    const [block] = await this.db
+      .select()
+      .from(blocks)
+      .where(or(eq(blocks.id, id), sql`${blocks.descendantIds} @> array[${id}]::uuid[]`));
+    if (!block) throw new NotFoundException(`Block ${id} not found`);
+    return block;
+  }
+
   /**
-   * Replace a page's blocks with the given ordered list, in a transaction (§45).
-   * The editor autosaves the whole document, so a full replace is simpler and
-   * correct at MVP scale; per-block move/duplicate endpoints arrive with
-   * drag & drop (Sprint 6).
+   * Upsert a page's blocks by id and delete anything missing from the list,
+   * in one transaction (§11E.3). This replaces the old delete-all + insert:
+   * that regenerated every block's identity on every autosave, which breaks
+   * anything that points at a block (backlinks, synced blocks, search
+   * anchors, version diffs, reminders).
+   *
+   * `updated_at` only advances when `content` actually changed, so a pure
+   * reorder doesn't create a version snapshot (§33A).
    */
-  async replace(pageId: string, nodes: BlockDto[]): Promise<Block[]> {
+  async replace(pageId: string, nodes: BlockPayloadDto[]): Promise<Block[]> {
     await this.pagesService.findOne(pageId);
 
     return this.db.transaction(async (tx) => {
-      await tx.delete(blocks).where(eq(blocks.pageId, pageId));
-      if (nodes.length === 0) return [];
+      const ids = nodes.map((n) => n.id);
 
-      return tx
+      if (ids.length === 0) {
+        await tx.delete(blocks).where(eq(blocks.pageId, pageId));
+        return [];
+      }
+
+      await tx
         .insert(blocks)
         .values(
           nodes.map((node, index) => ({
+            id: node.id,
             pageId,
             type: node.type,
             content: node.content ?? null,
             position: index,
+            descendantIds: collectDescendantBlockIds(node.content),
           })),
         )
-        .returning();
+        .onConflictDoUpdate({
+          target: blocks.id,
+          set: {
+            type: sql`excluded.type`,
+            content: sql`excluded.content`,
+            position: sql`excluded.position`,
+            descendantIds: sql`excluded.descendant_ids`,
+            updatedAt: sql`case when ${blocks.content} is distinct from excluded.content
+                                then now() else ${blocks.updatedAt} end`,
+          },
+        });
+
+      await tx.delete(blocks).where(and(eq(blocks.pageId, pageId), notInArray(blocks.id, ids)));
+
+      return tx
+        .select()
+        .from(blocks)
+        .where(eq(blocks.pageId, pageId))
+        .orderBy(sql`${blocks.position} asc`);
     });
   }
 }

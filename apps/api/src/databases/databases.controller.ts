@@ -12,7 +12,9 @@ import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import {
   CreatePropertyDto,
   createPropertySchema,
+  CreateRowDto,
   createRowSchema,
+  CreateViewDto,
   createViewSchema,
   UpdatePropertyDto,
   updatePropertySchema,
@@ -55,9 +57,9 @@ export class DatabasesController {
   @Post('databases/:id/rows')
   createRow(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body(new ZodValidationPipe(createRowSchema)) body: { values?: Record<string, unknown> },
+    @Body(new ZodValidationPipe(createRowSchema)) body: CreateRowDto,
   ) {
-    return this.databasesService.createRow(id, body.values);
+    return this.databasesService.createRow(id, body.values, body.id);
   }
 
   @Patch('database-rows/:id')
@@ -76,11 +78,7 @@ export class DatabasesController {
   @Post('databases/:id/views')
   createView(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body(new ZodValidationPipe(createViewSchema)) body: {
-      name: string;
-      type: string;
-      config?: Record<string, unknown>;
-    },
+    @Body(new ZodValidationPipe(createViewSchema)) body: CreateViewDto,
   ) {
     return this.databasesService.createView(id, body);
   }

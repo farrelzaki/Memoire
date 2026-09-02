@@ -11,6 +11,7 @@ import { blocks, Page, pageCanvases, PageType, pages } from '../db/schema';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 export type CreatePageInput = {
+  id?: string;
   title: string;
   parentPageId?: string | null;
   type?: PageType;
@@ -40,6 +41,7 @@ export class PagesService {
     const [page] = await this.db
       .insert(pages)
       .values({
+        ...(data.id ? { id: data.id } : {}),
         workspaceId: workspace.id,
         title: data.title ?? 'Untitled',
         type: data.type ?? 'document',

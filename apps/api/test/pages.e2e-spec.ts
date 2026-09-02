@@ -72,6 +72,17 @@ describe('Pages (e2e)', () => {
     expect(res.body).toMatchObject({ id: pageFixture.id });
   });
 
+  it('POST /api/pages accepts a client-supplied id (§10B.5 invariant 14)', async () => {
+    const clientId = '55555555-5555-5555-5555-555555555555';
+    await request(app.getHttpServer())
+      .post('/api/pages')
+      .send({ title: 'Notes', id: clientId })
+      .expect(201);
+    expect(pagesService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ id: clientId }),
+    );
+  });
+
   it('POST /api/pages with an invalid type returns the error shape (§60)', async () => {
     const res = await request(app.getHttpServer())
       .post('/api/pages')

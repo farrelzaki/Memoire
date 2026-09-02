@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { api, attachmentContentUrl } from '@/lib/api';
 import { blocksToDoc, docToBlocks, type TiptapDocument } from '@/lib/blocks';
 import type { Block } from '@/lib/types';
+import { BlockId } from './block-id';
 import { MermaidBlock } from './mermaid-node';
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -105,6 +106,7 @@ function EditorInstance({
       Placeholder.configure({ placeholder: "Type '/' for commands" }),
       Image.configure({ allowBase64: true }),
       MermaidBlock,
+      BlockId,
     ],
     content: blocksToDoc(initialBlocks) as unknown as Content,
     editorProps: {

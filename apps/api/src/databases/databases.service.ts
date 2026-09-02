@@ -148,6 +148,7 @@ export class DatabasesService {
   }
 
   async createProperty(databaseId: string, data: {
+    id?: string;
     name: string;
     type: string;
     config?: Record<string, unknown>;
@@ -157,6 +158,7 @@ export class DatabasesService {
     const [property] = await this.db
       .insert(databaseProperties)
       .values({
+        ...(data.id ? { id: data.id } : {}),
         databaseId,
         name: data.name,
         type: data.type,
@@ -186,12 +188,16 @@ export class DatabasesService {
     return { id, deleted: true };
   }
 
-  async createRow(databaseId: string, values?: Record<string, unknown>): Promise<DatabaseRow> {
+  async createRow(
+    databaseId: string,
+    values?: Record<string, unknown>,
+    id?: string,
+  ): Promise<DatabaseRow> {
     await this.ensureDatabase(databaseId);
     const position = await this.nextRowPosition(databaseId);
     const [row] = await this.db
       .insert(databaseRows)
-      .values({ databaseId, values: values ?? {}, position })
+      .values({ ...(id ? { id } : {}), databaseId, values: values ?? {}, position })
       .returning();
     return row;
   }
@@ -214,13 +220,14 @@ export class DatabasesService {
 
   async createView(
     databaseId: string,
-    data: { name: string; type: string; config?: Record<string, unknown> },
+    data: { id?: string; name: string; type: string; config?: Record<string, unknown> },
   ): Promise<DatabaseView> {
     await this.ensureDatabase(databaseId);
     const position = await this.nextViewPosition(databaseId);
     const [view] = await this.db
       .insert(databaseViews)
       .values({
+        ...(data.id ? { id: data.id } : {}),
         databaseId,
         name: data.name,
         type: data.type,

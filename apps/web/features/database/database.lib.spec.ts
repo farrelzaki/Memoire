@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyFilter, applySort } from './database.lib';
+import { applyFilter, applySort, mergeRowValues } from './database.lib';
 import type { DatabaseRow } from '@/lib/types';
 
 function row(id: string, values: Record<string, unknown>): DatabaseRow {
@@ -46,5 +46,28 @@ describe('applySort', () => {
   it('sorts text descending', () => {
     const out = applySort(rows, { propertyId: 'title', direction: 'desc' });
     expect(out.map((r) => r.id)).toEqual(['c', 'b', 'a']);
+  });
+});
+
+describe('mergeRowValues', () => {
+  it('keeps every existing property, not just the one that changed', () => {
+    const out = mergeRowValues(rows[0], 'status', 'Todo');
+    expect(out).toEqual({ title: 'Alpha', status: 'Todo', done: true, n: 2 });
+  });
+
+  it('adds a new property without dropping the rest (§10B.5 invariant 15)', () => {
+    const out = mergeRowValues(rows[2], 'done', true);
+    expect(out).toEqual({ title: 'Gamma', status: 'Done', done: true });
+  });
+
+  it('does not mutate the row it reads from', () => {
+    const original = { ...rows[0].values };
+    mergeRowValues(rows[0], 'status', 'Todo');
+    expect(rows[0].values).toEqual(original);
+  });
+
+  it('handles a row with no values yet', () => {
+    const out = mergeRowValues(row('d', {} as Record<string, unknown>), 'status', 'Todo');
+    expect(out).toEqual({ status: 'Todo' });
   });
 });

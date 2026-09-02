@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '@/lib/api';
 import type { DatabaseProperty, DatabaseRow, PropertyType } from '@/lib/types';
-import { applyFilter, applySort, type Filter, type Sort } from './database.lib';
+import { applyFilter, applySort, mergeRowValues, type Filter, type Sort } from './database.lib';
 import { BoardView, CalendarView, GalleryView, TableView } from './database-views';
 
 type ViewType = 'table' | 'board' | 'calendar' | 'gallery';
@@ -66,7 +66,7 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
   const sorted = sort ? applySort(filtered, sort) : filtered;
 
   const commitCell = (row: DatabaseRow, property: DatabaseProperty, value: unknown) => {
-    updateRow.mutate({ id: row.id, values: { ...(row.values ?? {}), [property.id]: value } });
+    updateRow.mutate({ id: row.id, values: mergeRowValues(row, property.id, value) });
   };
 
   const toggleSort = (propertyId: string) => {

@@ -151,6 +151,7 @@ menemukan file sebuah nomor seksi.
 | §70 | Reminder & Notifikasi _(baru)_ | [`60-platform.md`](./60-platform.md) |
 | §71 | Matriks Paritas Notion _(baru)_ | [`95-notion-parity.md`](./95-notion-parity.md) |
 | §72 | Architecture Decision Log _(baru)_ | [`96-decisions.md`](./96-decisions.md) |
+| §73 | Progress Tracker _(baru)_ | [`97-progress.md`](./97-progress.md) |
 
 ## 0.3 Aturan penomoran (normatif)
 

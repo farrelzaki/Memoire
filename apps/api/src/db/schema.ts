@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   AnyPgColumn,
   boolean,
@@ -78,6 +79,14 @@ export const blocks = pgTable(
     position: integer('position').notNull().default(0),
     content: jsonb('content').$type<unknown>(),
     properties: jsonb('properties').$type<Record<string, unknown>>(),
+    // Ids of blocks nested inside this node's `content` JSON (columns, toggles,
+    // table cells — never normalized into their own rows, §11E.4). Lets a
+    // nested block be found with one indexed query instead of scanning every
+    // row's JSON.
+    descendantIds: uuid('descendant_ids')
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -89,6 +98,7 @@ export const blocks = pgTable(
     pageIdx: index('blocks_page_idx').on(table.pageId),
     parentBlockIdx: index('blocks_parent_idx').on(table.parentBlockId),
     positionIdx: index('blocks_position_idx').on(table.position),
+    descendantIdsIdx: index('blocks_descendants_idx').using('gin', table.descendantIds),
   }),
 );
 

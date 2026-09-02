@@ -21,16 +21,16 @@ describe('MermaidBlock node config', () => {
       parentBlockId: null,
       type: 'mermaid',
       position: 0,
-      content: { type: 'mermaid', attrs: { code: 'graph TD;\nA-->B;' } },
+      content: { type: 'mermaid', attrs: { blockId: 'm1', code: 'graph TD;\nA-->B;' } },
       properties: null,
       createdAt: '',
       updatedAt: '',
     };
 
     const doc = blocksToDoc([block]);
-    expect(doc.content[0]).toMatchObject({ type: 'mermaid', attrs: { code: 'graph TD;\nA-->B;' } });
+    expect(doc.content[0]).toMatchObject({ type: 'mermaid', attrs: { blockId: 'm1', code: 'graph TD;\nA-->B;' } });
 
     const payloads = docToBlocks(doc);
-    expect(payloads).toEqual([{ type: 'mermaid', content: block.content }]);
+    expect(payloads).toEqual([{ id: 'm1', type: 'mermaid', content: block.content }]);
   });
 });

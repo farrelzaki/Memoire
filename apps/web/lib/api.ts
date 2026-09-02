@@ -28,6 +28,17 @@ function isNetworkError(err: unknown): boolean {
 }
 
 /**
+ * Client-generated id for POST bodies (§10B.5 invariant 14). Minting it here,
+ * before the request is even sent, is what keeps offline outbox replay
+ * idempotent — the id is fixed at call time, not assigned by the server, so
+ * a request that gets queued and retried after reconnect can't create a
+ * duplicate row under a different id.
+ */
+function newClientId(): string {
+  return crypto.randomUUID();
+}
+
+/**
  * Offline-aware request helper (Sprint 11). GETs are cached in IndexedDB and
  * served from cache when the network is unreachable; mutating requests get
  * queued into the outbox and replayed once back online (see offline-sync.ts).
@@ -81,6 +92,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export interface CreatePageInput {
+  id?: string;
   title?: string;
   parentPageId?: string | null;
   type?: PageType;
@@ -97,7 +109,10 @@ export const api = {
   listPages: () => request<Page[]>('/pages'),
   getPage: (id: string) => request<Page>(`/pages/${id}`),
   createPage: (body: CreatePageInput) =>
-    request<Page>('/pages', { method: 'POST', body: JSON.stringify(body) }),
+    request<Page>('/pages', {
+      method: 'POST',
+      body: JSON.stringify({ ...body, id: body.id ?? newClientId() }),
+    }),
   updatePage: (id: string, body: UpdatePageInput) =>
     request<Page>(`/pages/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   archivePage: (id: string) =>
@@ -138,10 +153,13 @@ export const api = {
 
   getDatabase: (pageId: string) =>
     request<DatabaseAggregate>(`/databases/by-page/${pageId}`),
-  createProperty: (databaseId: string, body: { name: string; type: PropertyType; config?: Record<string, unknown> }) =>
+  createProperty: (
+    databaseId: string,
+    body: { id?: string; name: string; type: PropertyType; config?: Record<string, unknown> },
+  ) =>
     request<DatabaseProperty>(`/databases/${databaseId}/properties`, {
       method: 'POST',
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, id: body.id ?? newClientId() }),
     }),
   updateProperty: (id: string, body: { name?: string; config?: Record<string, unknown> }) =>
     request<DatabaseProperty>(`/database-properties/${id}`, {
@@ -150,10 +168,10 @@ export const api = {
     }),
   deleteProperty: (id: string) =>
     request<{ id: string; deleted: boolean }>(`/database-properties/${id}`, { method: 'DELETE' }),
-  createRow: (databaseId: string, values: Record<string, unknown> = {}) =>
+  createRow: (databaseId: string, values: Record<string, unknown> = {}, id?: string) =>
     request<DatabaseRow>(`/databases/${databaseId}/rows`, {
       method: 'POST',
-      body: JSON.stringify({ values }),
+      body: JSON.stringify({ id: id ?? newClientId(), values }),
     }),
   updateRow: (id: string, values: Record<string, unknown>) =>
     request<DatabaseRow>(`/database-rows/${id}`, {
@@ -162,10 +180,13 @@ export const api = {
     }),
   deleteRow: (id: string) =>
     request<{ id: string; deleted: boolean }>(`/database-rows/${id}`, { method: 'DELETE' }),
-  createView: (databaseId: string, body: { name: string; type: string; config?: Record<string, unknown> }) =>
+  createView: (
+    databaseId: string,
+    body: { id?: string; name: string; type: string; config?: Record<string, unknown> },
+  ) =>
     request<DatabaseView>(`/databases/${databaseId}/views`, {
       method: 'POST',
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, id: body.id ?? newClientId() }),
     }),
   updateView: (id: string, body: { name?: string; config?: Record<string, unknown> }) =>
     request<DatabaseView>(`/database-views/${id}`, {

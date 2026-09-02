@@ -55,10 +55,20 @@ describe('Blocks (e2e)', () => {
   it('PUT /api/pages/:id/blocks replaces blocks', async () => {
     const res = await request(app.getHttpServer())
       .put(`/api/pages/${blockFixture.pageId}/blocks`)
-      .send({ blocks: [{ type: 'paragraph', content: { type: 'paragraph' } }] })
+      .send({
+        blocks: [{ id: blockFixture.id, type: 'paragraph', content: { type: 'paragraph' } }],
+      })
       .expect(200);
     expect(res.body).toHaveLength(1);
     expect(res.body[0]).toMatchObject({ type: 'paragraph', pageId: blockFixture.pageId });
+  });
+
+  it('PUT /api/pages/:id/blocks rejects a block without an id', async () => {
+    const res = await request(app.getHttpServer())
+      .put(`/api/pages/${blockFixture.pageId}/blocks`)
+      .send({ blocks: [{ type: 'paragraph', content: { type: 'paragraph' } }] })
+      .expect(400);
+    expect(res.body.success).toBe(false);
   });
 
   it('PUT /api/pages/:id/blocks rejects a missing blocks array', async () => {

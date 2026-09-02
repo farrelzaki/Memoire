@@ -15,6 +15,21 @@ function isEmpty(value: unknown): boolean {
   return value === undefined || value === null || value === '';
 }
 
+/**
+ * Builds the full `values` object for a row PATCH after one cell changes.
+ * `database_rows.values` is a PATCH-coalescible resource (§10B.5 invariant
+ * 15/16 — outbox may merge repeated PATCHes to the same row) so the body
+ * sent must always be the complete row representation, never a partial
+ * `{ [propertyId]: value }` patch of the nested object.
+ */
+export function mergeRowValues(
+  row: DatabaseRow,
+  propertyId: string,
+  value: unknown,
+): Record<string, unknown> {
+  return { ...(row.values ?? {}), [propertyId]: value };
+}
+
 export function applyFilter(rows: DatabaseRow[], filter: Filter): DatabaseRow[] {
   return rows.filter((row) => {
     const value = row.values?.[filter.propertyId];

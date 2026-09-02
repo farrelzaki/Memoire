@@ -51,6 +51,14 @@ describe('Databases (e2e)', () => {
     createRow: vi.fn(async () => rowFixture),
     updateRow: vi.fn(async () => rowFixture),
     deleteRow: vi.fn(async () => ({ id: rowFixture.id, deleted: true })),
+    createView: vi.fn(async () => ({
+      id: '66666666-6666-6666-6666-666666666666',
+      databaseId: databaseFixture.id,
+      name: 'Table',
+      type: 'table',
+      config: null,
+      position: 0,
+    })),
   };
 
   beforeAll(async () => {
@@ -93,6 +101,43 @@ describe('Databases (e2e)', () => {
       .send({ name: 'X', type: 'relation' })
       .expect(400);
     expect(res.body.success).toBe(false);
+  });
+
+  it('POST /api/databases/:id/properties accepts a client-supplied id (§10B.5 invariant 14)', async () => {
+    const clientId = '77777777-7777-7777-7777-777777777777';
+    await request(app.getHttpServer())
+      .post(`/api/databases/${databaseFixture.id}/properties`)
+      .send({ id: clientId, name: 'Status', type: 'select' })
+      .expect(201);
+    expect(databasesService.createProperty).toHaveBeenCalledWith(
+      databaseFixture.id,
+      expect.objectContaining({ id: clientId }),
+    );
+  });
+
+  it('POST /api/databases/:id/rows accepts a client-supplied id (§10B.5 invariant 14)', async () => {
+    const clientId = '88888888-8888-8888-8888-888888888888';
+    await request(app.getHttpServer())
+      .post(`/api/databases/${databaseFixture.id}/rows`)
+      .send({ id: clientId, values: { status: 'Todo' } })
+      .expect(201);
+    expect(databasesService.createRow).toHaveBeenCalledWith(
+      databaseFixture.id,
+      { status: 'Todo' },
+      clientId,
+    );
+  });
+
+  it('POST /api/databases/:id/views accepts a client-supplied id (§10B.5 invariant 14)', async () => {
+    const clientId = '99999999-9999-9999-9999-999999999999';
+    await request(app.getHttpServer())
+      .post(`/api/databases/${databaseFixture.id}/views`)
+      .send({ id: clientId, name: 'Table', type: 'table' })
+      .expect(201);
+    expect(databasesService.createView).toHaveBeenCalledWith(
+      databaseFixture.id,
+      expect.objectContaining({ id: clientId }),
+    );
   });
 
   it('PATCH /api/database-rows/:id updates values', async () => {
