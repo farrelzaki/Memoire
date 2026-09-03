@@ -16,10 +16,11 @@ supaya jadi log historis. Sprint yang sedang berjalan ditulis paling detail.
 **Sprint 13 — Fondasi: Identitas & Kontrak: selesai, semua item `[x]`.**
 **Sprint 14 — Primitif UI: selesai, semua item `[x]`** (dengan beberapa sub-bagian yang
 sengaja ditunda — lihat detail Sprint 14).
-**Sprint 15 — Interaksi Editor: drag reorder sungguhan sekarang `[x]` (dikerjakan +
-diverifikasi sesi ini, Docker akhirnya hidup). Sisa satu item terberat (multi-block
-selection + aksi massal, dan turunannya copy-markdown-multi-block) masih sengaja
-ditunda** — lihat detail Sprint 15, alasan ada di sana.
+**Sprint 15 — Interaksi Editor: SEMUA item `[x]`, selesai.** Drag reorder dan multi-block
+selection (dua item terberat yang sempat ditunda) dikerjakan + diverifikasi sungguhan di
+sesi ini, Docker akhirnya hidup. "Paste markdown jadi blok" tetap sengaja ditunda ke
+Sprint 24 (lihat alasannya di checklist detail — bukan kurang waktu, tapi memang
+didokumentasikan untuk dikerjakan bareng import Markdown).
 Sprint 1–12 + iterasi "app shell ala Notion" sudah selesai (commit `13a6bd5`, `2a6608c`).
 Sprint 13 sudah di-commit (`f6b61d1` "sprint 13"). Sprint 14 sudah di-commit juga
 (`6a4de1f` "feat: implement UI shell features, topbar navigation, and base components
@@ -317,19 +318,55 @@ mematikan `dev`, atau jangan jalankan keduanya sama sekali dalam satu sesi verif
         mesin ini).
       - Diverifikasi visual juga lewat screenshot Playwright manual (dihapus setelah
         dicek) — garis indikator biru muncul tepat di bawah blok target saat drag aktif.
-- [ ] **Multi-block selection (shift-klik, lasso) + aksi massal.** **Masih sengaja
-      ditunda** — bukan lagi karena infra mati (Docker sudah hidup sesi ini), tapi karena
-      scope-nya sendiri besar dan berisiko kalau dikerjakan tergesa di sisa sesi: perlu
-      desain untuk (a) bagaimana shift-klik/drag-lasso dibedakan dari seleksi teks native
-      ProseMirror yang sudah ada, (b) rendering highlight lintas beberapa top-level block
-      (decoration ProseMirror, atau overlay posisi-absolut per-blok seperti pola drop
-      indicator di atas), (c) toolbar aksi massal (delete/copy-as-markdown) dan
-      posisinya. Belum ada kode apa pun untuk ini — sesi berikutnya yang mengerjakan ini
-      sebaiknya mulai dari desain interaksi dulu (kapan mode multi-select aktif, apa yang
-      membatalkannya) sebelum menulis kode, bukan iterasi coba-coba di editor.
-- [ ] **Copy blok sebagai markdown untuk multi-block selection.** Item tunggal "Copy as
-      Markdown" sudah ada (lihat di atas), tapi menyalin **beberapa** blok sekaligus
-      butuh multi-select dulu (item di atas) — jadi otomatis ikut tertunda.
+- [x] **Multi-block selection + aksi massal.** Dikerjakan sesi ini (Docker hidup,
+      lanjutan langsung setelah drag reorder). Desain yang dipilih **bukan** shift-klik
+      atau lasso di atas teks — itu akan bentrok dengan seleksi teks native ProseMirror
+      yang sudah ada. Sebagai gantinya: **gutter drag-select**, strip 32px di sebelah kiri
+      konten editor, sepenuhnya di luar DOM ProseMirror (persis pola handle drag-reorder
+      — §CLAUDE.md/ADR-11, bukan dnd-kit, bukan decoration plugin ProseMirror). Implementasi
+      di `document-editor.tsx`:
+      - `blocksInRange(doc, from, to)` (helper baru) — semua top-level block yang posisi
+        awalnya jatuh dalam rentang `[min(from,to), max(from,to)]`, lewat `doc.forEach`.
+      - State `multiSelect: { from: number; to: number } | null`. Div gutter
+        (`data-testid="selection-gutter"`, fixed, di kiri `editor.view.dom`) menangani
+        `onMouseDown` murni native (bukan dnd-kit): set anchor lewat `blockPosAtCoords`
+        (helper yang sama dipakai drop indicator drag-reorder), lalu pasang listener
+        `mousemove`/`mouseup` di `window` untuk mengupdate `multiSelect.to` selama drag,
+        lepas listener saat `mouseup` (tapi seleksi **tetap ada** setelah mouse up sampai
+        di-clear).
+      - `multiSelect` di-clear di tiga tempat: `onSelectionUpdate` (klik ke teks asli
+        artinya user keluar dari mode multi-select), keydown `Escape` (listener baru,
+        pola sama seperti listener existing di `SlashMenu`), dan setelah aksi
+        delete/copy dijalankan.
+      - Highlight: satu overlay `fixed` (bukan per-blok) dari atas blok pertama sampai
+        bawah blok terakhir dalam rentang — posisinya dari `editor.view.nodeDOM(pos)`
+        `.getBoundingClientRect()` per blok pertama/terakhir, bukan `coordsAtPos` (yang
+        cuma memberi posisi satu baris teks, salah untuk blok multi-baris seperti
+        paragraf panjang atau code block).
+      - Toolbar aksi massal (fixed, style sama dengan `SelectionToolbar`/`BlockHandle`)
+        menampilkan jumlah blok terpilih + tombol **Delete** dan **Copy as Markdown**.
+        Diposisikan di atas blok pertama, tapi **flip ke bawah blok terakhir** kalau tidak
+        ada ruang di atas (mis. blok pertama yang terpilih ada tepat di bawah judul
+        halaman) — dicek lewat perbandingan sederhana, bukan collision detection penuh.
+      - `deleteMultiSelect`: satu transaksi `tr.delete(firstBlock.pos, lastBlock.pos +
+        lastBlock.node.nodeSize)` — hapus seluruh rentang sekaligus, bukan loop
+        delete per-blok (yang akan salah karena posisi bergeser setiap delete).
+      - `copyMultiSelectMarkdown` (juga menuntaskan item "Copy blok sebagai markdown
+        untuk multi-block selection" di bawah — satu implementasi, dua item checklist):
+        map tiap blok terpilih lewat `BlockTypeRegistry.get(node.type.name)?.toMarkdown`,
+        gabung dengan `\n\n`, tulis ke clipboard, toast.
+      - Test: `apps/web/e2e/block-multiselect.spec.ts` — drag-select 2 dari 3 blok lewat
+        gutter (mouse.down/move/up biasa, **bukan** native HTML5 `dragstart` — drag mouse
+        biasa ini justru bekerja normal di Playwright, beda dari kasus `draggable=true` di
+        `block-drag-reorder.spec.ts`), verifikasi toolbar "2 blocks" muncul, copy-as-markdown
+        lalu baca clipboard sungguhan (`test.use({ permissions: [...] })` + evaluasi
+        `navigator.clipboard.readText()` — clipboard Windows menormalkan line ending ke
+        CRLF, assertion men-strip itu dulu), lalu delete + reload untuk konfirmasi
+        persistence. Diverifikasi visual juga lewat screenshot manual (dihapus setelah
+        dicek) — overlay biru menutupi ketiga blok, toolbar muncul tepat di atasnya dengan
+        label jumlah blok yang benar.
+- [x] **Copy blok sebagai markdown untuk multi-block selection.** Selesai sebagai bagian
+      dari item di atas (`copyMultiSelectMarkdown`) — bukan implementasi terpisah.
 - [ ] **"Paste markdown jadi blok".** **Sengaja ditunda ke Sprint 24 (Import/Export).**
       §12A.5 di `docs/12-editor-blocks.md` eksplisit bilang paste markdown "memakai
       parser yang sama dengan import Markdown (§30A)" — parser itu belum ada sama sekali
@@ -344,16 +381,22 @@ mematikan `dev`, atau jangan jalankan keduanya sama sekali dalam satu sesi verif
 pnpm typecheck                    → PASS (packages/validation, apps/api, apps/web)
 pnpm --filter @memoire/web test   → PASS (17 files / 97 tests)
 pnpm --filter @memoire/api test   → PASS (14 files / 62 tests)
-pnpm --filter @memoire/web build  → PASS (dijalankan sekali di awal sesi sambil `pnpm dev`
-                                     masih hidup — inilah yang memicu korupsi `.next` yang
-                                     dicatat di atas; setelah `rm -rf apps/web/.next` +
-                                     restart `pnpm dev`, e2e jalan normal lagi. Build itu
-                                     sendiri tetap PASS, cuma dev server-nya yang rusak)
-npx playwright test (apps/web)    → PASS sungguhan, 3/3 spec, dijalankan berkali-kali
-                                     untuk cek stabilitas (bukan cuma --list lagi):
-                                     page-lifecycle.spec.ts, database.spec.ts (2 bug
-                                     test diperbaiki, lihat item Playwright di atas),
-                                     block-drag-reorder.spec.ts (baru).
+pnpm --filter @memoire/web build  → PASS. Dijalankan dua kali sesi ini: pertama sambil
+                                     `pnpm dev` masih hidup (memicu korupsi `.next` yang
+                                     dicatat di atas — build itu sendiri tetap PASS, cuma
+                                     dev server-nya yang rusak sampai `rm -rf
+                                     apps/web/.next` + restart); kedua kalinya SETELAH
+                                     mematikan `pnpm dev` dulu (`taskkill /T /F` pada PID
+                                     proses `next dev`/`nest start`), yang merupakan
+                                     urutan yang benar — lakukan begini di sesi
+                                     berikutnya, bukan urutan pertama.
+npx playwright test (apps/web)    → PASS sungguhan, 4/4 spec, dijalankan berkali-kali di
+                                     sesi ini (termasuk setelah build+restart dev server
+                                     di atas) untuk cek stabilitas — bukan cuma --list:
+                                     page-lifecycle.spec.ts, database.spec.ts (2 bug test
+                                     diperbaiki, lihat item Playwright di atas),
+                                     block-drag-reorder.spec.ts, block-multiselect.spec.ts
+                                     (dua terakhir baru sesi ini).
 ```
 
 `apps/web/package.json` nambah `@playwright/test` (devDependency) + script `test:e2e`.
@@ -383,22 +426,36 @@ aman dihapus lewat UI kalau mengganggu.
    toast undo, date picker) — baru lewat typecheck/test/build. Docker sekarang sudah bisa
    dinyalakan di mesin ini (`"/c/Program Files/Docker/Docker/Docker Desktop.exe"`, tunggu
    `docker info` sukses, ~2 menit), jadi kalau sesi berikutnya punya browser tool
-   (`mcp__claude-in-chrome__*` — sesi ini TIDAK punya ekstensinya terpasang, jadi semua
-   verifikasi visual Sprint 15 lewat screenshot Playwright manual, bukan Chrome tool),
-   coba primitive Sprint 14 langsung sebelum menganggapnya benar-benar selesai secara
-   visual.
-6. Item terakhir Sprint 15 yang masih `[ ]` adalah **multi-block selection + aksi
-   massal** (dan turunannya, copy-markdown-multi-block). Infra sudah bisa hidup — bukan
-   itu lagi penghalangnya — tapi ini genuinely fitur besar (lihat catatan desain di item
-   checklist-nya). Mulai dari situ, dengan `pnpm infra:up && pnpm db:migrate && pnpm dev`
-   di satu proses dan **jangan** jalankan `pnpm build`/`next build` di proses lain
-   selagi `dev` hidup (lihat catatan korupsi `.next` di atas — kalau sudah terlanjur,
-   `rm -rf apps/web/.next` lalu restart `pnpm dev` memperbaikinya). Pola verifikasi yang
-   terbukti jalan sesi ini: tulis fitur → tulis spec Playwright baru di `apps/web/e2e/` →
-   `npx playwright test` (bukan `--list`) → kalau perlu screenshot visual, tulis spec
-   sementara yang panggil `page.screenshot()`, baca hasilnya lewat tool `Read`, lalu hapus
-   spec sementara itu sebelum selesai (jangan biarkan file screenshot atau spec `_debug*`
-   nyasar ke commit).
+   (`mcp__claude-in-chrome__*` — belum pernah tersedia sejauh ini; semua verifikasi
+   visual Sprint 15 sampai sekarang lewat screenshot Playwright manual, bukan Chrome
+   tool), coba primitive Sprint 14 langsung sebelum menganggapnya benar-benar selesai
+   secara visual.
+6. **Sprint 15 sudah selesai semua** (checklist di atas semua `[x]` kecuali paste-markdown
+   yang memang sengaja dijadwalkan ke Sprint 24, bukan tertunda karena kehabisan waktu).
+   Sesi berikutnya yang mulai kerja: pindahkan Status Ringkas di atas ke **Sprint 16 —
+   Formatting & Katalog Blok A** (`docs/90-roadmap.md` §16 — link internal/eksternal,
+   underline/highlight/warna, callout, toggle list, columns, table block, code block
+   Shiki, KaTeX equation) dan mulai checklist baru berdasarkan daftar itu, dengan pola
+   yang sama seperti Sprint 15: satu item, satu spec Playwright kalau menyentuh UI
+   interaktif, jalankan sungguhan (bukan `--list`), baru centang.
+7. **Kalau user minta commit** Sprint 15: pesan `feat: sprint 15 — selection toolbar,
+   block copy actions, shortcuts cheatsheet, drag reorder, multi-block selection,
+   Playwright e2e`. File yang relevan: `apps/web/components/keyboard-shortcuts.tsx`,
+   `apps/web/features/editor/document-editor.tsx`, `apps/web/e2e/**`,
+   `apps/web/playwright.config.ts`, `apps/web/package.json`, `apps/web/vitest.config.ts`,
+   `package.json`, `pnpm-lock.yaml`, `.gitignore` (nambah `test-results/` dkk — artefak
+   Playwright yang sebelumnya tidak di-ignore), dan file ini.
+8. Pola infra + verifikasi yang terbukti jalan sesi ini, pakai lagi untuk sprint
+   berikutnya: `pnpm infra:up && pnpm db:migrate && pnpm dev` di satu proses; **jangan**
+   jalankan `pnpm build`/`next build` di proses lain selagi `dev` hidup (kalau terlanjur,
+   `rm -rf apps/web/.next` lalu restart `pnpm dev` memperbaikinya — lihat catatan
+   verifikasi Sprint 15 di atas). Tulis fitur → tulis spec Playwright baru di
+   `apps/web/e2e/` → `npx playwright test` (bukan `--list`) → kalau perlu screenshot
+   visual, tulis spec sementara yang panggil `page.screenshot()`, baca hasilnya lewat
+   tool `Read`, lalu **hapus spec sementara itu** sebelum selesai (jangan biarkan file
+   screenshot atau spec `_debug*`/`_shot*` nyasar ke commit — beberapa sempat lolos ke
+   `git status` sesi ini sebelum dihapus, cek `git status --short` sebelum menganggap
+   selesai).
 
 Jangan re-audit kode dari nol kalau file ini sudah ada dan terlihat up to date —
 percayai isinya kecuali ada tanda jelas sudah basi (mis. commit baru yang tidak

@@ -7,6 +7,7 @@ import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
 import { BubbleMenu, EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
@@ -74,6 +75,22 @@ function blockPosAtCoords(view: EditorView, x: number, y: number): { pos: number
   }
 }
 
+/** Top-level blocks whose start position falls within [from, to] (inclusive,
+ * order-independent) — the contiguous range a gutter drag-select spans. */
+function blocksInRange(
+  doc: ProseMirrorNode,
+  from: number,
+  to: number,
+): Array<{ pos: number; node: ProseMirrorNode }> {
+  const start = Math.min(from, to);
+  const end = Math.max(from, to);
+  const result: Array<{ pos: number; node: ProseMirrorNode }> = [];
+  doc.forEach((node, offset) => {
+    if (offset >= start && offset <= end) result.push({ pos: offset, node });
+  });
+  return result;
+}
+
 /** Moves the top-level block at `sourcePos` so it sits right before `targetPos`.
  * Native ProseMirror move (delete + reinsert, positions remapped through the
  * transaction) — never dnd-kit, which can't be mounted inside the ProseMirror
@@ -114,6 +131,7 @@ function EditorInstance({
   const [blockHandle, setBlockHandle] = useState<BlockHandleState | null>(null);
   const [blockMenuOpen, setBlockMenuOpen] = useState(false);
   const [dropIndicatorTop, setDropIndicatorTop] = useState<number | null>(null);
+  const [multiSelect, setMultiSelect] = useState<{ from: number; to: number } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Mutable (not state) — read from editorProps closures captured at mount, which
@@ -213,6 +231,10 @@ function EditorInstance({
       setSlash(detectSlash(editor));
       setBlockHandle(getBlockHandle(editor));
       setBlockMenuOpen(false);
+      // A real ProseMirror selection change means the user clicked into text —
+      // the gutter drag-select never touches editor selection, so this only
+      // fires for the interactions that should actually clear it.
+      setMultiSelect(null);
     },
   });
 
@@ -221,6 +243,14 @@ function EditorInstance({
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMultiSelect(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   const items = useMemo(
@@ -327,6 +357,37 @@ function EditorInstance({
     setBlockMenuOpen(false);
   }, [editor, blockHandle]);
 
+  const deleteMultiSelect = useCallback(() => {
+    if (!editor || !multiSelect) return;
+    const blocks = blocksInRange(editor.state.doc, multiSelect.from, multiSelect.to);
+    if (blocks.length === 0) return;
+    const first = blocks[0];
+    const last = blocks[blocks.length - 1];
+    editor
+      .chain()
+      .focus()
+      .command(({ tr }) => {
+        tr.delete(first.pos, last.pos + last.node.nodeSize);
+        return true;
+      })
+      .run();
+    setMultiSelect(null);
+  }, [editor, multiSelect]);
+
+  const copyMultiSelectMarkdown = useCallback(() => {
+    if (!editor || !multiSelect) return;
+    const blocks = blocksInRange(editor.state.doc, multiSelect.from, multiSelect.to);
+    const markdown = blocks
+      .map(({ node }) => BlockTypeRegistry.get(node.type.name)?.toMarkdown(node.toJSON() as TiptapNode))
+      .filter((md): md is string => Boolean(md))
+      .join('\n\n');
+    if (markdown) {
+      void navigator.clipboard.writeText(markdown);
+      toast({ description: `${blocks.length} block${blocks.length === 1 ? '' : 's'} copied as Markdown` });
+    }
+    setMultiSelect(null);
+  }, [editor, multiSelect]);
+
   const handleFilePick = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
@@ -339,6 +400,9 @@ function EditorInstance({
   );
 
   if (!editor) return null;
+
+  const contentRect = editor.view.dom.getBoundingClientRect();
+  const selectedBlocks = multiSelect ? blocksInRange(editor.state.doc, multiSelect.from, multiSelect.to) : [];
 
   return (
     <div className="relative">
@@ -386,9 +450,84 @@ function EditorInstance({
       {dropIndicatorTop !== null && (
         <div
           className="pointer-events-none fixed z-40 h-0.5 rounded bg-blue-400"
-          style={{ top: dropIndicatorTop, left: editor.view.dom.getBoundingClientRect().left, width: editor.view.dom.getBoundingClientRect().width }}
+          style={{ top: dropIndicatorTop, left: contentRect.left, width: contentRect.width }}
         />
       )}
+
+      {/* Multi-block selection (§15) — a native mouse drag on this gutter strip to the
+          left of the content, entirely outside the ProseMirror content DOM (never
+          dnd-kit, never a ProseMirror decoration plugin — §CLAUDE.md/ADR-11). Dragging
+          it computes a contiguous top-level block range via `blockPosAtCoords`, the same
+          helper the drag-reorder drop indicator uses. */}
+      <div
+        data-testid="selection-gutter"
+        className="fixed z-30 cursor-pointer"
+        style={{ top: contentRect.top, left: contentRect.left - 40, width: 32, height: contentRect.height }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          const anchor = blockPosAtCoords(editor.view, contentRect.left + 5, e.clientY);
+          if (!anchor) return;
+          setMultiSelect({ from: anchor.pos, to: anchor.pos });
+
+          const onMove = (ev: MouseEvent) => {
+            const current = blockPosAtCoords(editor.view, contentRect.left + 5, ev.clientY);
+            if (current) setMultiSelect({ from: anchor.pos, to: current.pos });
+          };
+          const onUp = () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+          };
+          window.addEventListener('mousemove', onMove);
+          window.addEventListener('mouseup', onUp);
+        }}
+      />
+
+      {selectedBlocks.length > 0 &&
+        (() => {
+          const firstDom = editor.view.nodeDOM(selectedBlocks[0].pos) as HTMLElement | null;
+          const lastDom = editor.view.nodeDOM(selectedBlocks[selectedBlocks.length - 1].pos) as HTMLElement | null;
+          if (!firstDom || !lastDom) return null;
+          const firstRect = firstDom.getBoundingClientRect();
+          const lastRect = lastDom.getBoundingClientRect();
+          // Flip below the selection when there isn't room above (e.g. the page
+          // title sits right there) instead of overlapping it.
+          const toolbarTop = firstRect.top - 40 < 8 ? lastRect.bottom + 8 : firstRect.top - 40;
+          return (
+            <>
+              <div
+                className="pointer-events-none fixed z-30 rounded bg-blue-400/10 ring-2 ring-blue-400/40"
+                style={{
+                  top: firstRect.top,
+                  left: contentRect.left,
+                  width: contentRect.width,
+                  height: lastRect.bottom - firstRect.top,
+                }}
+              />
+              <div
+                className="fixed z-40 flex items-center gap-1 rounded-lg bg-zinc-900 p-1 shadow-lg dark:bg-zinc-100"
+                style={{ top: toolbarTop, left: contentRect.left }}
+              >
+                <span className="px-2 text-xs text-zinc-300 dark:text-zinc-600">
+                  {selectedBlocks.length} block{selectedBlocks.length === 1 ? '' : 's'}
+                </span>
+                <button
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={copyMultiSelectMarkdown}
+                  className="rounded px-2 py-1 text-xs text-zinc-100 hover:bg-zinc-700 dark:text-zinc-800 dark:hover:bg-zinc-300"
+                >
+                  Copy as Markdown
+                </button>
+                <button
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={deleteMultiSelect}
+                  className="rounded px-2 py-1 text-xs text-red-300 hover:bg-zinc-700 dark:text-red-600 dark:hover:bg-zinc-300"
+                >
+                  Delete
+                </button>
+              </div>
+            </>
+          );
+        })()}
     </div>
   );
 }
