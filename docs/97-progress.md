@@ -17,22 +17,32 @@ supaya jadi log historis. Sprint yang sedang berjalan ditulis paling detail.
 **Sprint 14 — Primitif UI: selesai, semua item `[x]`** (dengan beberapa sub-bagian yang
 sengaja ditunda — lihat detail Sprint 14).
 **Sprint 15 — Interaksi Editor: SEMUA item `[x]`, selesai.** Drag reorder dan multi-block
-selection (dua item terberat yang sempat ditunda) dikerjakan + diverifikasi sungguhan di
-sesi ini, Docker akhirnya hidup. "Paste markdown jadi blok" tetap sengaja ditunda ke
-Sprint 24 (lihat alasannya di checklist detail — bukan kurang waktu, tapi memang
-didokumentasikan untuk dikerjakan bareng import Markdown).
-Sprint 1–12 + iterasi "app shell ala Notion" sudah selesai (commit `13a6bd5`, `2a6608c`).
-Sprint 13 sudah di-commit (`f6b61d1` "sprint 13"). Sprint 14 sudah di-commit juga
-(`6a4de1f` "feat: implement UI shell features, topbar navigation, and base components
-library") — **kedua commit itu dibuat langsung oleh user di luar sesi ini**, bukan oleh
-Claude (Claude tidak pernah memanggil `git commit` di sesi manapun sejauh ini).
+selection (dua item terberat yang sempat ditunda) dikerjakan + diverifikasi sungguhan.
+"Paste markdown jadi blok" tetap sengaja ditunda ke Sprint 24 (lihat alasannya di
+checklist detail — bukan kurang waktu, tapi memang didokumentasikan untuk dikerjakan
+bareng import Markdown).
+**Sprint 16 — Formatting & Katalog Blok A: SEMUA item `[x]`, selesai.** Marks
+(underline/highlight/textColor/sub/superscript), link internal+eksternal, callout,
+toggle + toggle heading 1-3, table, code block Shiki, columns 2-5, KaTeX inline+block —
+semuanya dikerjakan + diverifikasi sungguhan sesi ini. Lihat checklist detail untuk tiga
+bug nyata yang ditemukan dan diperbaiki sepanjang jalan (bukan cuma implementasi baru).
 
-Sprint 15 (kerja sesi ini + sesi sebelumnya) **belum di-commit** — masih di working tree.
-Jalankan `git status` untuk lihat file yang berubah. Kalau user minta commit, pakai pesan
-`feat: sprint 15 — selection toolbar, block copy actions, shortcuts cheatsheet, drag
-reorder, Playwright e2e`, lalu **pindah status ringkas ini ke Sprint 16** (§16,
-`docs/90-roadmap.md`) dan mulai checklist baru di bawah — jangan hapus checklist sprint
-yang sudah selesai, biarkan sebagai log historis.
+Sprint 1–12 + iterasi "app shell ala Notion" sudah selesai (commit `13a6bd5`, `2a6608c`).
+Sprint 13 di-commit (`f6b61d1`). Sprint 14 di-commit (`6a4de1f`). **Sprint 15 dan Sprint 16
+sudah di-commit juga** — `bc27f80` "sprint 16" (berisi mayoritas kerja Sprint 15: drag
+reorder, Playwright setup awal) dan `3b25291` "sprint 15 finished" (multi-block
+selection) — **kedua commit ini dibuat langsung oleh user di luar sesi**, bukan oleh
+Claude (Claude tidak pernah memanggil `git commit` di sesi manapun sejauh ini). Judul
+commit-nya kebalik dari isinya (yang berjudul "sprint 16" itu isinya Sprint 15, dan
+sebaliknya) — jangan bingung, itu murni penamaan user, cek `git show --stat <hash>` kalau
+perlu memastikan isi commit tertentu, jangan percaya judulnya begitu saja.
+
+**Pekerjaan Sprint 16 sesi ini (semua fitur di atas) belum di-commit** — masih di working
+tree saat sesi ini berakhir. Jalankan `git status` untuk lihat file yang berubah. Kalau
+user minta commit, pakai pesan `feat: sprint 16 — marks, link, callout, toggle, table,
+code block Shiki, columns, KaTeX equation`, lalu **pindah status ringkas ini ke Sprint
+17** (§17, `docs/90-roadmap.md`) dan mulai checklist baru di bawah — jangan hapus
+checklist sprint yang sudah selesai, biarkan sebagai log historis.
 
 ---
 
@@ -410,6 +420,241 @@ aman dihapus lewat UI kalau mengganggu.
 
 ---
 
+## Sprint 16 — Checklist Detail
+
+Semua item roadmap §16 (`docs/90-roadmap.md`) selesai dan diverifikasi sungguhan lewat
+Docker + `pnpm dev` + Playwright — bukan cuma typecheck/test. Tiga bug **nyata** ditemukan
+dan diperbaiki sepanjang sesi ini (bukan di aplikasi yang sudah ada — di kode yang baru
+ditulis sesi ini sendiri, terungkap justru karena setiap fitur langsung dites hidup,
+bukan dipercaya dari baca kode saja). Dicatat detail di bawah karena polanya kemungkinan
+terulang di sprint-sprint blok baru berikutnya.
+
+- [x] **Marks: underline, highlight, textColor, subscript, superscript.**
+      `@tiptap/extension-{underline,highlight,text-style,color,subscript,superscript}`
+      terpasang di `document-editor.tsx`. `Highlight.configure({ multicolor: true })`
+      dan `Color` sama-sama menyimpan nilai `hsl(var(--mark-fg-red))`/
+      `hsl(var(--mark-bg-yellow))` sebagai attrs mark — **bukan hex bebas** — token
+      barunya didefinisikan di `app/globals.css` (`--mark-fg-*`/`--mark-bg-*`, 8 warna ×
+      light/dark) dan didaftarkan di `features/editor/mark-colors.ts`
+      (`MARK_COLORS`). Karena nilainya literal `hsl(var(--...))`, warna otomatis
+      menyesuaikan saat ganti tema tanpa kode tambahan apa pun — persis alasan §12A.1
+      melarang hex bebas.
+      Toolbar seleksi (`SelectionToolbar`) bertambah tombol Underline, Subscript,
+      Superscript, dan dua dropdown swatch (`ColorSwatchMenu`) untuk text color/highlight.
+      `==highlight==` sebagai input rule **sudah otomatis ada** — bawaan
+      `@tiptap/extension-highlight`, tidak perlu kode custom (dicek langsung ke source,
+      pola yang sama seperti verifikasi shortcut Sprint 15).
+      Serializer: `inlineToHtml`/`inlineToMarkdown` di `block-type-registry.ts` menangani
+      kelimanya. Markdown cuma punya syntax untuk highlight (`==x==`) — underline/
+      subscript/superscript/textColor tidak punya padanan Markdown polos (§12A.5 memang
+      tidak mendaftarkan syntax untuk itu), teksnya tetap round-trip, cuma formatnya
+      hilang di ekspor Markdown.
+      Test: `apps/web/e2e/editor-marks-and-links.spec.ts` (mark pertama) + unit test baru
+      di `block-type-registry.spec.ts`.
+- [x] **Link internal + eksternal.** `@tiptap/extension-link` dengan
+      `openOnClick: false` — klik ditangani sendiri lewat `editorProps.handleClick`:
+      href berawalan `/` (internal) di-`router.push()` (navigasi client-side, bukan hard
+      reload), selain itu `window.open(href, '_blank', 'noopener,noreferrer')`.
+      `LinkMenu` (popover baru di `SelectionToolbar`) menerima input teks: kalau berbentuk
+      URL (`^https?:\/\/`) jadi tautan eksternal; kalau tidak, jadi pencarian judul
+      halaman langsung dari cache query `['pages']` yang sudah ada (tidak fetch baru),
+      hasilnya bisa diklik untuk jadi tautan internal (`setLink({ href: '/{pageId}',
+      target: null })` — `target: null` eksplisit meng-override default `_blank` dari
+      opsi extension supaya link internal buka di tab yang sama).
+      Bookmark preview (§12A.2, tiga pilihan "biarkan teks / jadi tautan / jadi bookmark")
+      **sengaja tidak dikerjakan** — bookmark block sendiri belum ada (item Sprint 17),
+      jadi pilihan ketiganya belum punya tujuan. Link plain sudah cukup untuk sprint ini.
+      Test: `editor-marks-and-links.spec.ts` (test kedua) — external buka tab baru,
+      internal navigasi via router tanpa hard reload.
+- [x] **Callout, toggle, toggle heading 1-3.** Tiga node Tiptap baru, semuanya custom
+      NodeView (`ReactNodeViewRenderer`), pola yang sama dengan `MermaidBlock` dari sesi
+      sebelumnya:
+      - `features/editor/callout-node.tsx` — `content: 'block+'`, attrs `icon` (default
+        💡). Ikon bisa diklik untuk ganti — pakai ulang `EmojiPicker` yang sudah ada
+        (`features/shell/emoji-picker.tsx`, dipakai juga untuk ikon halaman), bukan
+        membangun picker baru.
+      - `features/editor/toggle-node.tsx` — satu node `toggle` menutupi baik "Toggle"
+        polos maupun "Toggle heading 1-3" lewat attrs `headingLevel: null | 1 | 2 | 3`
+        (pola yang sama seperti node `heading` bawaan yang satu node + attrs `level`,
+        bukan tiga node terpisah). Fold state (§12B.5) di localStorage berkunci
+        `blockId`, **bukan** di `blocks.content` — lihat `foldKey`/`readOpen`/`writeOpen`.
+        **Toggle baru default TERBUKA**, bukan tertutup — kalau default tertutup, CSS
+        `display: none` pada child yang baru saja dibuat (belum sempat diisi) membuat
+        browser mengalihkan ketikan pengguna ke node lain yang masih terlihat, jadi teks
+        yang diketik hilang tanpa pesan error apa pun. Ditemukan lewat e2e, bukan lewat
+        baca kode.
+      - Kedua node ini awalnya pakai `content: 'paragraph block*'` (mengunci child
+        pertama sebagai paragraph secara skema) — **ternyata itu mematikan Enter-untuk-
+        split ProseMirror di dalam node** (Enter tidak melakukan apa pun, tanpa error).
+        Diganti ke `content: 'block+'` polos (sama seperti Callout, yang memang terbukti
+        split dengan benar) — "child pertama = summary" sekarang aturan tampilan/CSS,
+        bukan skema.
+      - CSS fold: `.toggle-content-closed > * > *:not(:first-child) { display: none; }`
+        di `globals.css` — perhatikan `> * >` (dua level), bukan `>` satu level, karena
+        `NodeViewContent` (Tiptap/React) menyisipkan div wrapper sendiri di antara
+        `.toggle-content` dan child sungguhan. Kalau fold berhenti bekerja lagi di masa
+        depan, cek dulu apakah strukturnya berubah sebelum curiga ke tempat lain.
+      - Slash command: "Callout", "Toggle list", "Toggle heading 1/2/3" — lima entri baru
+        di `items` (array manual di `document-editor.tsx`, bukan baca dari
+        `BlockTypeRegistry` — pola lama dari Sprint 13/15 belum berubah).
+      - `BlockTypeRegistry` entri `callout` dan `toggle` (toHtml/toMarkdown/toPlainText).
+        Toggle markdown: baris pertama `#`×headingLevel + summary, baris berikutnya isi
+        apa adanya (tidak ada syntax Markdown asli untuk collapsible content).
+      - Test: `apps/web/e2e/callout-and-toggle.spec.ts` — ganti ikon (dan
+        cek fokus balik ke editor setelahnya — lihat bug icon-picker-focus di bawah),
+        fold/unfold, reload (isi tetap ada di server meski folded, fold state sendiri
+        dari localStorage).
+      - **Bug ditemukan+diperbaiki**: memilih ikon callout dari `EmojiPicker` (elemen di
+        luar `contentEditable`) membuat fokus browser lepas dari editor — ketikan
+        berikutnya hilang begitu saja, sama seperti pola bug toggle-fold di atas tapi
+        akar masalah beda (fokus DOM, bukan CSS `display:none`). Diperbaiki dengan
+        `editor.chain().focus(posDiDalamNode).run()` eksplisit setelah pilih/hapus ikon
+        (`refocusContent()` di `callout-node.tsx`).
+- [x] **Table.** `@tiptap/extension-table` (+ `-row`/`-header`/`-cell`),
+      `Table.configure({ resizable: true })`. Slash command "Table" masukkan 3×3 dengan
+      header row. `TableToolbar` (komponen baru di `document-editor.tsx`, style sama
+      dengan `BlockHandle`/`SelectionToolbar`) muncul fixed di atas tabel yang sedang
+      diedit — dicari lewat `getTableHandle` (jalan ke atas dari selection nyari node
+      `table`, ambil rect DOM-nya langsung lewat `editor.view.nodeDOM`, bukan
+      `coordsAtPos` yang cuma tahu satu titik teks). Isinya tombol native
+      `addRowBefore/After`, `deleteRow`, `addColumnBefore/After`, `deleteColumn`,
+      `toggleHeaderRow`, `deleteTable` — semuanya command bawaan extension-table, tidak
+      ada logic edit-tabel custom.
+      CSS resize handle + selected-cell overlay standar dari dokumentasi
+      `@tiptap/extension-table` ditambahkan ke `globals.css`.
+      `BlockTypeRegistry` entri `table`/`tableRow`/`tableHeader`/`tableCell` — markdown
+      jadi tabel GFM asli (`| a | b |` + baris `---`), baris pertama dianggap header.
+      Test: `apps/web/e2e/table-block.spec.ts`.
+- [x] **Code block: Shiki, pemilih bahasa, salin, wrap.** Dua file baru, sengaja
+      dipisah karena dua mekanisme berbeda:
+      - `features/editor/code-block-node.tsx` — `CodeBlockShiki` (extend
+        `@tiptap/extension-code-block`, **bukan** StarterKit punya — StarterKit
+        di-`configure({ codeBlock: false })` supaya tidak dobel), NodeView dengan header
+        (`<select>` bahasa dari daftar kurasi `CODE_BLOCK_LANGUAGES`, tombol Copy, tombol
+        Wrap — wrap state lokal per instance, sengaja tidak disimpan ke mana pun, murni
+        preferensi tampilan sementara).
+      - `features/editor/code-block-highlight.ts` — `CodeBlockHighlight`, **plugin
+        ProseMirror decoration terpisah**, bukan bagian dari NodeView di atas. Ini
+        keputusan desain yang sengaja: NodeView di atas TIDAK mengganti `contentDOM` node
+        (tetap `<code>` biasa yang dikelola ProseMirror penuh, teks polos), supaya
+        ekstraksi teks (`node.textContent`, dipakai `toPlainText`/tombol Copy/autosave)
+        tetap akurat tanpa perlu strip HTML styling. Warna syntax datang murni dari
+        `Decoration.inline` yang dihitung async lewat `codeToTokensBase` (Shiki,
+        lazy-load grammar per bahasa, di-cache Shiki sendiri setelah pemakaian pertama).
+        Plugin ini juga pasang `MutationObserver` pada `document.documentElement` untuk
+        recompute warna saat tema gelap/terang berganti (tema dibaca dari class `.dark`
+        di `<html>`, bukan state React — lihat `app/providers.tsx`).
+      - Font/CSS KaTeX **tidak relevan di sini** (itu item equation) — code block tidak
+        butuh aset self-hosted, Shiki menghasilkan warna inline lewat JS murni.
+      - Test: `apps/web/e2e/code-block.spec.ts` — pilih bahasa, tunggu span berwarna
+        muncul (async), copy ke clipboard sungguhan, toggle wrap, reload (bahasa +
+        warna + isi semuanya harus tetap ada).
+- [x] **Columns 2-5, lebar bisa digeser.** `features/editor/columns-node.tsx` — dua node:
+      `Columns` (`content: 'column{2,5}'`, skema ProseMirror sendiri yang menegakkan
+      batas 2-5, bukan validasi manual) dan `Column` (`content: 'block+'`, attrs `width`
+      persen, NodeView dengan handle resize di tepi kanan).
+      Resize: drag mengubah `width` kolom yang di-drag DAN kolom tetangga kanannya
+      sekaligus (jumlah keduanya tetap konstan — geser kanan tidak pernah membuat total
+      lebar row melebihi 100% atau bolong), lewat `tr.setNodeAttribute` pada posisi kedua
+      node (`getPos()` dari kolom yang di-drag = posisi awalnya sendiri; `getPos() +
+      node.nodeSize` = posisi awal kolom berikutnya — tidak perlu jalan-jalan/hitung
+      manual dari parent).
+      **Bug ditemukan+diperbaiki (penting untuk NodeView lain di masa depan)**:
+      `ReactNodeViewRenderer` membungkus DOM yang dirender NodeView-mu di dalam elemen
+      pembungkus TAMBAHAN (`<div class="react-renderer node-{nama}">`) yang **kamu tidak
+      kontrol stylingnya**. Kalau NodeView butuh berpartisipasi dalam flex/grid parent
+      (seperti kolom di sini, butuh `flex: 0 0 {width}%`), styling itu HARUS ditaruh di
+      elemen yang KAMU render sendiri (`NodeViewWrapper`), tapi pembungkus tambahan itu
+      jadi actual flex ITEM-nya, bukan punyamu — akibatnya semua kolom render lebar 0
+      sampai ditemukan lewat inspeksi `getComputedStyle` manual. Perbaikannya:
+      `.ProseMirror .node-column { display: contents; }` di `globals.css` — bikin
+      pembungkus tambahan itu "transparan" secara layout, supaya `NodeViewWrapper` jadi
+      flex item sungguhan. **Kalau bikin NodeView baru yang perlu berpartisipasi dalam
+      flex/grid parent (bukan cuma block biasa), cek pola ini duluan.**
+      `BlockTypeRegistry` entri `columns`/`column` — tidak ada padanan Markdown untuk
+      layout sisi-berdampingan, isi tiap kolom tetap ter-ekspor berurutan (bukan
+      sisi-berdampingan lagi).
+      Test: `apps/web/e2e/columns-block.spec.ts` — insert 3 kolom, ketik di dua di
+      antaranya, drag resize, verifikasi lebar BENAR-BENAR berubah (bukan cuma DOM attrs)
+      lewat `boundingBox()`, reload.
+- [x] **KaTeX: equation block + inline equation, font self-hosted.**
+      `features/editor/equation-node.tsx` — dua node: `Equation` (block, `atom: true`)
+      dan `InlineEquation` (`group: 'inline', inline: true, atom: true` — **node atom,
+      bukan mark**, sesuai §12A.1 eksplisit bilang begitu karena persamaan bukan gaya
+      yang diterapkan ke teks yang sudah ada, melainkan menggantikan `$...$` yang
+      diketik). Klik untuk edit (textarea/input LaTeX inline), `katex.renderToString`
+      dengan `throwOnError: false` — LaTeX tidak valid tampil sebagai teks source polos,
+      bukan crash.
+      Font + CSS KaTeX **di-copy manual ke `apps/web/public/katex/`** (dari
+      `node_modules/katex/dist/{katex.min.css,fonts/}`) — bukan CDN, bukan import lewat
+      bundler Next (yang akan mem-bundle fontnya ke `.next/static`, bukan `public/`
+      sesuai instruksi eksplisit roadmap "font disalin ke public/"). Dimuat lewat
+      `<link rel="stylesheet" href="/katex/katex.min.css">` di `app/layout.tsx`.
+      **Bug ditemukan+diperbaiki (serius — sempat membuat SEMUA test flaky)**: `<link>`
+      itu awalnya ditaruh sebagai anak langsung `<html>` (sebelum `<body>`) — HTML tidak
+      valid, bikin React/Next 15 App Router melempar hydration-mismatch dan menampilkan
+      overlay dev (`<nextjs-portal>`) yang **menutupi seluruh halaman dan mem-block semua
+      klik** sesudahnya, di SETIAP page load. Ini yang bikin serangkaian test flaky/gagal
+      acak sepanjang bagian akhir sesi sampai akhirnya ditelusuri lewat pembacaan
+      `console error` event, bukan dari log server (error-nya cuma muncul di console
+      browser, bukan terminal `pnpm dev`). Perbaikannya: bungkus `<link>` itu di dalam
+      `<head>` eksplisit. **Kalau e2e tiba-tiba flaky luas tanpa perubahan logika yang
+      jelas terkait, cek console error browser dulu (bukan cuma log server) — overlay dev
+      Next bisa jadi baru muncul dari perubahan tak terduga di `layout.tsx`/root markup.**
+      Input rule `$x$` (§12A.5) — **bukan** `nodeInputRule` bawaan Tiptap (helper itu
+      cuma mengganti *captured group*-nya saja, dirancang untuk rule seperti `@mention`
+      yang satu karakter terakhirnya sebagai trigger — dipakai apa adanya, hasilnya dua
+      tanda `$` tertinggal sebagai teks literal di kedua sisi node, ketauan lewat e2e).
+      Diganti `InputRule` custom dengan `tr.replaceWith(range.from, range.to, node)` yang
+      makan seluruh rentang match, termasuk kedua delimiter.
+      `BlockTypeRegistry` entri `equation` + `inlineToHtml`/`inlineToMarkdown`/
+      `inlineToPlainText` di `block-type-registry.ts` diperluas menangani node
+      `inlineEquation` (sebelumnya cuma tahu `text`/`hardBreak`) — markdown `$latex$`,
+      html `<span data-type="inline-equation">$latex$</span>` (sumber mentah, bukan HTML
+      KaTeX yang sudah dirender — konsisten dengan pola mermaid yang juga ekspor source,
+      bukan SVG-nya).
+      Test: `apps/web/e2e/equation-block.spec.ts` — block via slash menu, inline via
+      input rule (assert eksplisit tidak ada `$` tersisa di teks paragraf), keduanya
+      reload dengan KaTeX ter-render ulang dan `annotation` (sumber LaTeX asli tersimpan
+      di markup KaTeX) cocok.
+
+### Verifikasi terakhir (state Sprint 16)
+
+```
+pnpm typecheck                    → PASS (packages/validation, apps/api, apps/web)
+pnpm --filter @memoire/web test   → PASS (17 files / 110 tests)
+pnpm --filter @memoire/web build  → PASS (dijalankan setelah mematikan pnpm dev — urutan
+                                     yang benar, lihat catatan Sprint 15). Satu warning
+                                     ESLint non-blocking: @next/next/no-css-tags pada
+                                     <link> KaTeX di layout.tsx — itu memang cara yang
+                                     benar untuk stylesheet self-hosted dari public/,
+                                     bukan sesuatu yang perlu diperbaiki.
+npx playwright test (apps/web)    → PASS sungguhan, 13/13 spec, dijalankan berkali-kali
+                                     untuk cek stabilitas. 6 spec baru sesi ini:
+                                     editor-marks-and-links.spec.ts, callout-and-
+                                     toggle.spec.ts, table-block.spec.ts, code-
+                                     block.spec.ts, columns-block.spec.ts, equation-
+                                     block.spec.ts.
+```
+
+Sesi ini juga menemukan (dan memulihkan dari) satu insiden infra: API (`nest start
+--watch`) sempat mati total di tengah sesi setelah percobaan `taskkill` yang gagal
+sebagian meninggalkan proses dalam keadaan tidak konsisten (port 3001 berhenti listening,
+tidak ada error di log, `curl` langsung connection-refused). Gejalanya di Playwright:
+`getByTitle('New page').click()` timeout karena sidebar menampilkan "No pages yet."
+(fetch ke API yang mati). **Kalau ini terjadi lagi**: `netstat -ano | grep :3001` untuk
+konfirmasi port benar-benar tidak listening (bukan cuma lambat), lalu `taskkill /PID
+<pid-cmd.exe-nest> /T /F` pada proses yang benar (cek dengan `Get-CimInstance
+Win32_Process ... Select ProcessId, CommandLine`, bukan asumsi PID lama masih valid),
+lalu `pnpm dev` ulang dari awal — jangan coba "perbaiki" proses yang sudah setengah mati.
+
+Package baru: `@tiptap/extension-{underline,highlight,text-style,color,subscript,
+superscript,link,table,table-row,table-header,table-cell,code-block}`, `shiki`, `katex`
+— semuanya versi `^2.10.0` untuk paket `@tiptap/*` (menyesuaikan versi core yang sudah
+terpasang), bukan versi 3.x terbaru yang tersedia di registry.
+
+---
+
 ## Cara Lanjut
 
 1. Baca checklist sprint aktif di atas (yang paling bawah), kerjakan dari item pertama
@@ -427,35 +672,49 @@ aman dihapus lewat UI kalau mengganggu.
    dinyalakan di mesin ini (`"/c/Program Files/Docker/Docker/Docker Desktop.exe"`, tunggu
    `docker info` sukses, ~2 menit), jadi kalau sesi berikutnya punya browser tool
    (`mcp__claude-in-chrome__*` — belum pernah tersedia sejauh ini; semua verifikasi
-   visual Sprint 15 sampai sekarang lewat screenshot Playwright manual, bukan Chrome
-   tool), coba primitive Sprint 14 langsung sebelum menganggapnya benar-benar selesai
-   secara visual.
-6. **Sprint 15 sudah selesai semua** (checklist di atas semua `[x]` kecuali paste-markdown
-   yang memang sengaja dijadwalkan ke Sprint 24, bukan tertunda karena kehabisan waktu).
-   Sesi berikutnya yang mulai kerja: pindahkan Status Ringkas di atas ke **Sprint 16 —
-   Formatting & Katalog Blok A** (`docs/90-roadmap.md` §16 — link internal/eksternal,
-   underline/highlight/warna, callout, toggle list, columns, table block, code block
-   Shiki, KaTeX equation) dan mulai checklist baru berdasarkan daftar itu, dengan pola
-   yang sama seperti Sprint 15: satu item, satu spec Playwright kalau menyentuh UI
-   interaktif, jalankan sungguhan (bukan `--list`), baru centang.
-7. **Kalau user minta commit** Sprint 15: pesan `feat: sprint 15 — selection toolbar,
-   block copy actions, shortcuts cheatsheet, drag reorder, multi-block selection,
-   Playwright e2e`. File yang relevan: `apps/web/components/keyboard-shortcuts.tsx`,
-   `apps/web/features/editor/document-editor.tsx`, `apps/web/e2e/**`,
-   `apps/web/playwright.config.ts`, `apps/web/package.json`, `apps/web/vitest.config.ts`,
-   `package.json`, `pnpm-lock.yaml`, `.gitignore` (nambah `test-results/` dkk — artefak
-   Playwright yang sebelumnya tidak di-ignore), dan file ini.
-8. Pola infra + verifikasi yang terbukti jalan sesi ini, pakai lagi untuk sprint
-   berikutnya: `pnpm infra:up && pnpm db:migrate && pnpm dev` di satu proses; **jangan**
-   jalankan `pnpm build`/`next build` di proses lain selagi `dev` hidup (kalau terlanjur,
-   `rm -rf apps/web/.next` lalu restart `pnpm dev` memperbaikinya — lihat catatan
-   verifikasi Sprint 15 di atas). Tulis fitur → tulis spec Playwright baru di
-   `apps/web/e2e/` → `npx playwright test` (bukan `--list`) → kalau perlu screenshot
-   visual, tulis spec sementara yang panggil `page.screenshot()`, baca hasilnya lewat
-   tool `Read`, lalu **hapus spec sementara itu** sebelum selesai (jangan biarkan file
-   screenshot atau spec `_debug*`/`_shot*` nyasar ke commit — beberapa sempat lolos ke
-   `git status` sesi ini sebelum dihapus, cek `git status --short` sebelum menganggap
-   selesai).
+   visual Sprint 15/16 sampai sekarang lewat Playwright + inspeksi HTML manual, bukan
+   Chrome tool), coba primitive Sprint 14 langsung sebelum menganggapnya benar-benar
+   selesai secara visual.
+6. **Sprint 15 dan Sprint 16 sudah selesai semua** (checklist masing-masing di atas
+   semua `[x]`, kecuali paste-markdown Sprint 15 yang memang sengaja dijadwalkan ke
+   Sprint 24). Sesi berikutnya yang mulai kerja: pindahkan Status Ringkas di atas ke
+   **Sprint 17 — Katalog Blok B & Fitur Halaman** (`docs/90-roadmap.md` §17 — sub-page
+   block, link-to-page block, breadcrumb, table of contents, synced block, file/video/
+   audio/PDF block, bookmark block dengan pratinjau server-side, embed ber-sandbox, image
+   resize/align/caption, `pages.settings`, backlinks, cover reposition) dan mulai
+   checklist baru berdasarkan daftar itu.
+   **Perhatian khusus untuk bookmark block** (§29A.1, sudah disinggung juga di
+   CLAUDE.md): pratinjau URL WAJIB diambil dari sisi server (NestJS) dengan penjaga SSRF
+   (tolak loopback/IP privat/skema non-http, timeout, batas ukuran) — kalau browser yang
+   menembak langsung, setiap situs yang pernah ditempel tahu IP pengguna. Ada tes wajib
+   untuk penjaga SSRF-nya juga, jangan dilewati.
+7. Pola kerja yang terbukti jalan sepanjang Sprint 15-16, pakai lagi: satu item
+   checklist → tulis kode → tulis spec Playwright baru di `apps/web/e2e/` →
+   `npx playwright test` (bukan `--list`) sampai lulus stabil (jalankan 2-3× kalau ragu,
+   mesin ini kadang flaky karena kontensi resource lokal, bukan berarti kode salah) →
+   baru centang `[x]`. Kalau perlu screenshot visual, tulis spec sementara yang panggil
+   `page.screenshot()`, baca hasilnya lewat tool `Read`, lalu **hapus spec sementara itu**
+   sebelum selesai — cek `git status --short` sebelum menganggap satu item selesai supaya
+   file `_debug*`/`_shot*` tidak nyasar ke commit.
+8. Pola infra, pakai lagi: `pnpm infra:up && pnpm db:migrate && pnpm dev` di satu proses;
+   **jangan** jalankan `pnpm build`/`next build` di proses lain selagi `dev` hidup (kalau
+   terlanjur, `rm -rf apps/web/.next` lalu restart `pnpm dev` memperbaikinya). Kalau API
+   tiba-tiba connection-refused tanpa error di log (`nest start --watch` mati diam-diam),
+   lihat catatan insiden di akhir bagian Verifikasi Sprint 16 di atas — jangan asumsikan
+   proses lama masih valid, cek ulang PID-nya dulu.
+9. **Kalau e2e tiba-tiba flaky luas** (banyak spec gagal bersamaan dengan pesan yang tidak
+   berhubungan satu sama lain) padahal perubahan kodenya kecil dan spesifik: cek
+   `page.on('console', ...)`/`pageerror` dulu, bukan cuma log terminal `pnpm dev` — ada
+   kasus nyata sesi ini di mana root cause-nya (hydration error dari `<link>` yang salah
+   tempat di `layout.tsx`) cuma muncul di console browser, sama sekali tidak tercatat di
+   log server manapun.
+10. **Kalau bikin NodeView baru** (custom Tiptap node lewat `ReactNodeViewRenderer`) yang
+    perlu berpartisipasi dalam flex/grid parent (bukan sekadar block biasa yang ditumpuk
+    vertikal): ingat `ReactNodeViewRenderer` membungkus DOM-mu dalam elemen
+    `.react-renderer.node-{nama}` yang kamu tidak kontrol stylingnya — styling
+    flex/grid-mu sendiri di `NodeViewWrapper` tidak akan berefek kecuali pembungkus
+    tambahan itu di-`display: contents` dulu (lihat solusi `columns-node.tsx` /
+    `.node-column` di `globals.css` untuk contoh konkretnya).
 
 Jangan re-audit kode dari nol kalau file ini sudah ada dan terlihat up to date —
 percayai isinya kecuali ada tanda jelas sudah basi (mis. commit baru yang tidak

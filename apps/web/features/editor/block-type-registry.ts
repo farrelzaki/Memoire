@@ -1,10 +1,19 @@
 import type { AnyExtension } from '@tiptap/core';
 import Image from '@tiptap/extension-image';
+import Table from '@tiptap/extension-table';
+import TableCell from '@tiptap/extension-table-cell';
+import TableHeader from '@tiptap/extension-table-header';
+import TableRow from '@tiptap/extension-table-row';
 import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
 import StarterKit from '@tiptap/starter-kit';
 import type { TiptapNode } from '@/lib/types';
+import { Callout } from './callout-node';
+import { Column, Columns } from './columns-node';
+import { Equation } from './equation-node';
+import { CodeBlockShiki } from './code-block-node';
 import { MermaidBlock } from './mermaid-node';
+import { Toggle } from './toggle-node';
 
 /**
  * Sprint 13 (§11D.2): the registry every editor-facing consumer reads from —
@@ -63,6 +72,9 @@ function inlineToHtml(nodes: TiptapNode[] = []): string {
   return nodes
     .map((n) => {
       if (n.type === 'hardBreak') return '<br>';
+      if (n.type === 'inlineEquation') {
+        return `<span data-type="inline-equation">$${escapeHtml((n.attrs?.latex as string) ?? '')}$</span>`;
+      }
       if (n.type !== 'text') return '';
       let html = escapeHtml(n.text ?? '');
       for (const mark of n.marks ?? []) {
@@ -79,6 +91,36 @@ function inlineToHtml(nodes: TiptapNode[] = []): string {
           case 'strike':
             html = `<s>${html}</s>`;
             break;
+          case 'underline':
+            html = `<u>${html}</u>`;
+            break;
+          case 'subscript':
+            html = `<sub>${html}</sub>`;
+            break;
+          case 'superscript':
+            html = `<sup>${html}</sup>`;
+            break;
+          case 'highlight': {
+            const attrs = (mark.attrs ?? {}) as Record<string, unknown>;
+            const color = typeof attrs.color === 'string' ? attrs.color : undefined;
+            html = color
+              ? `<mark style="background-color: ${color}; color: inherit">${html}</mark>`
+              : `<mark>${html}</mark>`;
+            break;
+          }
+          case 'textStyle': {
+            const attrs = (mark.attrs ?? {}) as Record<string, unknown>;
+            const color = typeof attrs.color === 'string' ? attrs.color : undefined;
+            if (color) html = `<span style="color: ${color}">${html}</span>`;
+            break;
+          }
+          case 'link': {
+            const attrs = (mark.attrs ?? {}) as Record<string, unknown>;
+            const href = typeof attrs.href === 'string' ? attrs.href : '';
+            const external = href.startsWith('http');
+            html = `<a href="${escapeHtml(href)}"${external ? ' target="_blank" rel="noopener noreferrer"' : ''}>${html}</a>`;
+            break;
+          }
         }
       }
       return html;
@@ -90,6 +132,7 @@ function inlineToMarkdown(nodes: TiptapNode[] = []): string {
   return nodes
     .map((n) => {
       if (n.type === 'hardBreak') return '\n';
+      if (n.type === 'inlineEquation') return `$${(n.attrs?.latex as string) ?? ''}$`;
       if (n.type !== 'text') return '';
       let md = n.text ?? '';
       for (const mark of n.marks ?? []) {
@@ -106,6 +149,18 @@ function inlineToMarkdown(nodes: TiptapNode[] = []): string {
           case 'strike':
             md = `~~${md}~~`;
             break;
+          case 'highlight':
+            md = `==${md}==`;
+            break;
+          case 'link': {
+            const attrs = (mark.attrs ?? {}) as Record<string, unknown>;
+            const href = typeof attrs.href === 'string' ? attrs.href : '';
+            md = `[${md}](${href})`;
+            break;
+          }
+          // underline/subscript/superscript/textStyle have no plain-Markdown
+          // equivalent (§12A.5 only lists syntax for the marks above) — the
+          // text itself still round-trips, just without the formatting.
         }
       }
       return md;
@@ -114,7 +169,13 @@ function inlineToMarkdown(nodes: TiptapNode[] = []): string {
 }
 
 function inlineToPlainText(nodes: TiptapNode[] = []): string {
-  return nodes.map((n) => (n.type === 'hardBreak' ? '\n' : (n.text ?? ''))).join('');
+  return nodes
+    .map((n) => {
+      if (n.type === 'hardBreak') return '\n';
+      if (n.type === 'inlineEquation') return (n.attrs?.latex as string) ?? '';
+      return n.text ?? '';
+    })
+    .join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -244,7 +305,7 @@ BlockTypeRegistry.register({
   icon: '</>',
   group: 'basic',
   keywords: ['code', 'codeblock', 'snippet'],
-  tiptapExtension: StarterKit,
+  tiptapExtension: CodeBlockShiki,
   slashCommand: { title: 'Code', description: 'Capture a code snippet' },
   turnIntoTargets: ['paragraph'],
   inputRule: /^```$/,
@@ -342,4 +403,156 @@ BlockTypeRegistry.register({
   toHtml: (node) => `<pre class="mermaid">${escapeHtml((node.attrs?.code as string) ?? '')}</pre>`,
   toMarkdown: (node) => `\`\`\`mermaid\n${(node.attrs?.code as string) ?? ''}\n\`\`\``,
   toPlainText: (node) => (node.attrs?.code as string) ?? '',
+});
+
+BlockTypeRegistry.register({
+  key: 'callout',
+  label: 'Callout',
+  icon: '💡',
+  group: 'basic',
+  keywords: ['callout', 'note', 'info', 'warning'],
+  tiptapExtension: Callout,
+  slashCommand: { title: 'Callout', description: 'Make writing stand out' },
+  toHtml: (node) => {
+    const icon = typeof node.attrs?.icon === 'string' ? node.attrs.icon : '💡';
+    return `<div data-type="callout"><span>${escapeHtml(icon)}</span><div>${(node.content ?? [])
+      .map(childToHtml)
+      .join('')}</div></div>`;
+  },
+  toMarkdown: (node) => {
+    const icon = typeof node.attrs?.icon === 'string' ? node.attrs.icon : '💡';
+    const body = (node.content ?? []).map(childToMarkdown).join('\n');
+    return `> ${icon} ${body.split('\n').join('\n> ')}`;
+  },
+  toPlainText: (node) => (node.content ?? []).map(childToPlainText).join('\n'),
+});
+
+BlockTypeRegistry.register({
+  key: 'toggle',
+  label: 'Toggle',
+  icon: '▸',
+  group: 'basic',
+  keywords: ['toggle', 'collapse', 'fold', 'expand', 'heading'],
+  tiptapExtension: Toggle,
+  slashCommand: { title: 'Toggle list', description: 'Collapsible content' },
+  toHtml: (node) => {
+    const [summary, ...rest] = node.content ?? [];
+    const summaryHtml = summary ? inlineToHtml(summary.content) : '';
+    const restHtml = rest.map(childToHtml).join('');
+    return `<details><summary>${summaryHtml}</summary>${restHtml}</details>`;
+  },
+  toMarkdown: (node) => {
+    const level = typeof node.attrs?.headingLevel === 'number' ? node.attrs.headingLevel : 0;
+    const [summary, ...rest] = node.content ?? [];
+    const summaryMd = summary ? inlineToMarkdown(summary.content) : '';
+    const prefix = level > 0 ? `${'#'.repeat(level)} ` : '';
+    const restMd = rest.map(childToMarkdown).join('\n');
+    return [`${prefix}${summaryMd}`, restMd].filter(Boolean).join('\n');
+  },
+  toPlainText: (node) => (node.content ?? []).map(childToPlainText).join('\n'),
+});
+
+function cellPlainText(cell: TiptapNode): string {
+  return (cell.content ?? []).map(childToPlainText).join(' ');
+}
+
+BlockTypeRegistry.register({
+  key: 'table',
+  label: 'Table',
+  icon: '▦',
+  group: 'basic',
+  keywords: ['table', 'grid', 'spreadsheet'],
+  tiptapExtension: Table,
+  slashCommand: { title: 'Table', description: 'A simple table, not a database' },
+  toHtml: (node) => `<table>${(node.content ?? []).map(childToHtml).join('')}</table>`,
+  toMarkdown: (node) => {
+    const rows = node.content ?? [];
+    if (rows.length === 0) return '';
+    const cellsOf = (row: TiptapNode) => (row.content ?? []).map(cellPlainText);
+    const header = cellsOf(rows[0]);
+    const separator = header.map(() => '---');
+    const body = rows.slice(1).map(cellsOf);
+    const toRow = (cells: string[]) => `| ${cells.join(' | ')} |`;
+    return [toRow(header), toRow(separator), ...body.map(toRow)].join('\n');
+  },
+  toPlainText: (node) =>
+    (node.content ?? [])
+      .map((row) => (row.content ?? []).map(cellPlainText).join('\t'))
+      .join('\n'),
+});
+
+BlockTypeRegistry.register({
+  key: 'tableRow',
+  label: 'Table row',
+  icon: '▦',
+  group: 'basic',
+  keywords: [],
+  tiptapExtension: TableRow,
+  toHtml: (node) => `<tr>${(node.content ?? []).map(childToHtml).join('')}</tr>`,
+  toMarkdown: (node) => `| ${(node.content ?? []).map(cellPlainText).join(' | ')} |`,
+  toPlainText: (node) => (node.content ?? []).map(cellPlainText).join('\t'),
+});
+
+BlockTypeRegistry.register({
+  key: 'tableHeader',
+  label: 'Table header cell',
+  icon: '▦',
+  group: 'basic',
+  keywords: [],
+  tiptapExtension: TableHeader,
+  toHtml: (node) => `<th>${(node.content ?? []).map(childToHtml).join('')}</th>`,
+  toMarkdown: cellPlainText,
+  toPlainText: cellPlainText,
+});
+
+BlockTypeRegistry.register({
+  key: 'tableCell',
+  label: 'Table cell',
+  icon: '▦',
+  group: 'basic',
+  keywords: [],
+  tiptapExtension: TableCell,
+  toHtml: (node) => `<td>${(node.content ?? []).map(childToHtml).join('')}</td>`,
+  toMarkdown: cellPlainText,
+  toPlainText: cellPlainText,
+});
+
+BlockTypeRegistry.register({
+  key: 'columns',
+  label: 'Columns',
+  icon: '▥',
+  group: 'basic',
+  keywords: ['columns', 'layout', 'side by side'],
+  tiptapExtension: Columns,
+  slashCommand: { title: 'Columns', description: 'Side-by-side content' },
+  toHtml: (node) => `<div data-type="columns">${(node.content ?? []).map(childToHtml).join('')}</div>`,
+  // No Markdown equivalent for a side-by-side layout — each column's content
+  // still round-trips, one after another, just no longer side by side.
+  toMarkdown: (node) => (node.content ?? []).map(childToMarkdown).join('\n\n'),
+  toPlainText: (node) => (node.content ?? []).map(childToPlainText).join('\n'),
+});
+
+BlockTypeRegistry.register({
+  key: 'column',
+  label: 'Column',
+  icon: '▥',
+  group: 'basic',
+  keywords: [],
+  tiptapExtension: Column,
+  toHtml: (node) => `<div data-type="column">${(node.content ?? []).map(childToHtml).join('')}</div>`,
+  toMarkdown: (node) => (node.content ?? []).map(childToMarkdown).join('\n'),
+  toPlainText: (node) => (node.content ?? []).map(childToPlainText).join('\n'),
+});
+
+BlockTypeRegistry.register({
+  key: 'equation',
+  label: 'Equation',
+  icon: '∑',
+  group: 'advanced',
+  keywords: ['equation', 'math', 'katex', 'formula'],
+  tiptapExtension: Equation,
+  slashCommand: { title: 'Equation', description: 'Block equation (KaTeX)' },
+  toHtml: (node) => `<div data-type="equation">$$${escapeHtml((node.attrs?.latex as string) ?? '')}$$</div>`,
+  toMarkdown: (node) => `$$${(node.attrs?.latex as string) ?? ''}$$`,
+  toPlainText: (node) => (node.attrs?.latex as string) ?? '',
 });

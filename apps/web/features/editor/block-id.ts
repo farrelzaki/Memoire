@@ -21,6 +21,12 @@ const BLOCK_ID_TYPES = [
   'taskItem',
   'image',
   'mermaid',
+  'callout',
+  'toggle',
+  'table',
+  'columns',
+  'column',
+  'equation',
 ];
 
 function newBlockId(): string {

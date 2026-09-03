@@ -31,6 +31,28 @@
     --input: 240 6% 90%;
     --ring: 240 5% 65%;
     --radius: 0.5rem;
+
+    /* Sprint 16 (§12A.1): editor text/highlight color tokens. Marks store the
+       literal `hsl(var(--mark-fg-red))` string as their attribute value, never a
+       hardcoded hex — that's what keeps a selection made in light mode legible
+       after switching to dark (§12A.1's whole point: yellow text picked in light
+       mode goes unreadable on a dark background if it were stored as a fixed hex). */
+    --mark-fg-gray: 220 9% 46%;
+    --mark-fg-red: 0 72% 51%;
+    --mark-fg-orange: 25 95% 45%;
+    --mark-fg-yellow: 45 93% 38%;
+    --mark-fg-green: 142 71% 33%;
+    --mark-fg-blue: 217 91% 55%;
+    --mark-fg-purple: 271 81% 56%;
+    --mark-fg-pink: 330 81% 55%;
+    --mark-bg-gray: 220 9% 91%;
+    --mark-bg-red: 0 85% 93%;
+    --mark-bg-orange: 25 95% 90%;
+    --mark-bg-yellow: 48 96% 86%;
+    --mark-bg-green: 142 60% 90%;
+    --mark-bg-blue: 217 91% 93%;
+    --mark-bg-purple: 271 81% 94%;
+    --mark-bg-pink: 330 81% 94%;
   }
 
   .dark {
@@ -53,6 +75,23 @@
     --border: 240 4% 20%;
     --input: 240 4% 20%;
     --ring: 240 5% 40%;
+
+    --mark-fg-gray: 220 9% 65%;
+    --mark-fg-red: 0 70% 65%;
+    --mark-fg-orange: 25 90% 62%;
+    --mark-fg-yellow: 45 90% 62%;
+    --mark-fg-green: 142 55% 58%;
+    --mark-fg-blue: 217 85% 68%;
+    --mark-fg-purple: 271 75% 72%;
+    --mark-fg-pink: 330 75% 72%;
+    --mark-bg-gray: 220 9% 22%;
+    --mark-bg-red: 0 45% 24%;
+    --mark-bg-orange: 25 55% 22%;
+    --mark-bg-yellow: 45 55% 20%;
+    --mark-bg-green: 142 35% 20%;
+    --mark-bg-blue: 217 50% 22%;
+    --mark-bg-purple: 271 40% 25%;
+    --mark-bg-pink: 330 40% 25%;
   }
 }
 
@@ -102,6 +141,71 @@
 .ProseMirror ul[data-type='taskList'] { list-style: none; padding-left: 0; }
 .ProseMirror ul[data-type='taskList'] li { display: flex; gap: 0.5rem; }
 .ProseMirror ul[data-type='taskList'] li > label { margin-top: 0.3rem; }
+
+/* Toggle / toggle-heading fold state (§12B.5) — the child after the summary
+   paragraph is hidden with plain CSS, not removed from the document, so the
+   content is still there (and still saved) while collapsed.
+   `NodeViewContent` (Tiptap/React) inserts its own wrapper div around the
+   actual block children, so the selector has to reach one level past
+   `.toggle-content-closed` itself, not target its direct children. */
+.toggle-content-closed > * > *:not(:first-child) { display: none; }
+.toggle-content > * > *:last-child { margin-bottom: 0; }
+
+/* Table block (§12B.1) — standard @tiptap/extension-table styling (column
+   resize handle, selected-cell overlay); see their docs for this exact
+   pattern. */
+.ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0.5rem 0;
+  overflow: hidden;
+}
+.ProseMirror td,
+.ProseMirror th {
+  border: 1px solid #e4e4e7; /* zinc-200 */
+  box-sizing: border-box;
+  min-width: 1em;
+  padding: 0.375rem 0.5rem;
+  position: relative;
+  vertical-align: top;
+}
+.ProseMirror th {
+  background: #fafafa; /* zinc-50 */
+  font-weight: 600;
+  text-align: left;
+}
+.ProseMirror .selectedCell:after {
+  background: rgba(59, 130, 246, 0.12);
+  content: '';
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 2;
+}
+.ProseMirror .column-resize-handle {
+  background-color: #3b82f6; /* blue-500 */
+  bottom: -2px;
+  pointer-events: none;
+  position: absolute;
+  right: -2px;
+  top: 0;
+  width: 4px;
+}
+.ProseMirror.resize-cursor { cursor: col-resize; }
+
+.dark .ProseMirror td,
+.dark .ProseMirror th { border-color: #3f3f46; } /* zinc-700 */
+.dark .ProseMirror th { background: #18181b; } /* zinc-900 */
+
+/* Columns (§12B.1) — `ReactNodeViewRenderer` wraps every `column` node's own
+   rendered div (which carries the real `flex: 0 0 {width}%` sizing) inside
+   an extra `.react-renderer.node-column` element that Tiptap creates and we
+   don't control the styling of. Without `display: contents` here, that outer
+   div becomes the actual flex item (with default `flex: 0 1 auto`) and the
+   `flex` style one level in has no effect on layout — confirmed by hand: all
+   three columns rendered at 0 width until this was added. */
+.ProseMirror .node-column { display: contents; }
 
 /* Dark mode editor overrides (temporary hex pending the theme-token system). */
 .dark .ProseMirror p.is-editor-empty:first-child::before { color: #52525b; }

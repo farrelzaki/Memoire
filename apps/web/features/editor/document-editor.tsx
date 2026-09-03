@@ -1,23 +1,42 @@
 'use client';
 
 import type { Content } from '@tiptap/core';
+import Color from '@tiptap/extension-color';
+import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
+import Link from '@tiptap/extension-link';
+import Table from '@tiptap/extension-table';
+import TableCell from '@tiptap/extension-table-cell';
+import TableHeader from '@tiptap/extension-table-header';
+import TableRow from '@tiptap/extension-table-row';
 import Placeholder from '@tiptap/extension-placeholder';
+import Subscript from '@tiptap/extension-subscript';
+import Superscript from '@tiptap/extension-superscript';
 import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
+import TextStyle from '@tiptap/extension-text-style';
+import Underline from '@tiptap/extension-underline';
 import { BubbleMenu, EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
 import { useQuery } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { api, attachmentContentUrl } from '@/lib/api';
 import { blocksToDoc, docToBlocks, type TiptapDocument } from '@/lib/blocks';
 import type { Block, TiptapNode } from '@/lib/types';
 import { toast } from '@/stores/toast';
 import { BlockId } from './block-id';
+import { Callout } from './callout-node';
+import { Column, Columns } from './columns-node';
+import { Equation, InlineEquation } from './equation-node';
+import { CodeBlockHighlight } from './code-block-highlight';
+import { CodeBlockShiki } from './code-block-node';
 import { BlockTypeRegistry } from './block-type-registry';
+import { MARK_COLORS } from './mark-colors';
 import { MermaidBlock } from './mermaid-node';
+import { Toggle } from './toggle-node';
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -58,6 +77,29 @@ function getBlockHandle(editor: Editor): BlockHandleState | null {
   } catch {
     return null;
   }
+}
+
+interface TableHandleState {
+  top: number;
+  left: number;
+  width: number;
+}
+
+/** Walks up from the selection looking for an ancestor `table` node — reading
+ * its DOM rect directly (rather than `coordsAtPos`, which only knows about a
+ * single text position) so the floating row/column toolbar spans the whole
+ * table width, not just the current cell. */
+function getTableHandle(editor: Editor): TableHandleState | null {
+  const { $from } = editor.state.selection;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    if ($from.node(depth).type.name !== 'table') continue;
+    const pos = $from.before(depth);
+    const dom = editor.view.nodeDOM(pos);
+    if (!(dom instanceof HTMLElement)) return null;
+    const rect = dom.getBoundingClientRect();
+    return { top: rect.top, left: rect.left, width: rect.width };
+  }
+  return null;
 }
 
 /** Top-level block boundary (position + line top) nearest a viewport point — used to
@@ -126,9 +168,11 @@ function EditorInstance({
   pageId: string;
   initialBlocks: Block[];
 }) {
+  const router = useRouter();
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [slash, setSlash] = useState<SlashState | null>(null);
   const [blockHandle, setBlockHandle] = useState<BlockHandleState | null>(null);
+  const [tableHandle, setTableHandle] = useState<TableHandleState | null>(null);
   const [blockMenuOpen, setBlockMenuOpen] = useState(false);
   const [dropIndicatorTop, setDropIndicatorTop] = useState<number | null>(null);
   const [multiSelect, setMultiSelect] = useState<{ from: number; to: number } | null>(null);
@@ -156,16 +200,56 @@ function EditorInstance({
     // tree. Defer the first render to the client instead.
     immediatelyRender: false,
     extensions: [
-      StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
+      StarterKit.configure({ heading: { levels: [1, 2, 3] }, codeBlock: false }),
+      CodeBlockShiki,
+      CodeBlockHighlight,
       TaskList,
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder: "Type '/' for commands" }),
       Image.configure({ allowBase64: true }),
+      Underline,
+      TextStyle,
+      Color,
+      Highlight.configure({ multicolor: true }),
+      Subscript,
+      Superscript,
+      Link.configure({
+        openOnClick: false, // handled ourselves — internal links use router.push, external open in a new tab
+        autolink: true,
+        HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
+      }),
+      Table.configure({ resizable: true }),
+      TableRow,
+      TableHeader,
+      TableCell,
       MermaidBlock,
+      Callout,
+      Toggle,
+      Columns,
+      Column,
+      Equation,
+      InlineEquation,
       BlockId,
     ],
     content: blocksToDoc(initialBlocks) as unknown as Content,
     editorProps: {
+      // Link clicks (§12A.2): `Link` is configured with `openOnClick: false` so
+      // internal links (href starting with `/`) navigate via Next's router
+      // instead of a hard page load; external links still open in a new tab.
+      handleClick(view, pos, event) {
+        const $pos = view.state.doc.resolve(pos);
+        const linkMark = $pos.marks().find((m) => m.type.name === 'link');
+        if (!linkMark) return false;
+        const href = linkMark.attrs.href as string;
+        if (!href) return false;
+        event.preventDefault();
+        if (href.startsWith('/')) {
+          router.push(href);
+        } else {
+          window.open(href, '_blank', 'noopener,noreferrer');
+        }
+        return true;
+      },
       handleDOMEvents: {
         dragover: (view, event) => {
           if (dragSourcePosRef.current === null) return false;
@@ -230,6 +314,7 @@ function EditorInstance({
     onSelectionUpdate: ({ editor }) => {
       setSlash(detectSlash(editor));
       setBlockHandle(getBlockHandle(editor));
+      setTableHandle(getTableHandle(editor));
       setBlockMenuOpen(false);
       // A real ProseMirror selection change means the user clicked into text —
       // the gutter drag-select never touches editor selection, so this only
@@ -265,6 +350,83 @@ function EditorInstance({
       { title: 'Quote', hint: '"', run: () => editor?.chain().focus().toggleBlockquote().run() },
       { title: 'Code', hint: '</>', run: () => editor?.chain().focus().toggleCodeBlock().run() },
       { title: 'Divider', hint: '—', run: () => editor?.chain().focus().setHorizontalRule().run() },
+      {
+        title: 'Table',
+        hint: '3×3',
+        run: () =>
+          editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+      },
+      ...[2, 3, 4, 5].map((n) => ({
+        title: `${n} columns`,
+        hint: 'Side by side',
+        run: () =>
+          editor
+            ?.chain()
+            .focus()
+            .insertContent({
+              type: 'columns',
+              content: Array.from({ length: n }, () => ({
+                type: 'column',
+                content: [{ type: 'paragraph' }],
+              })),
+            })
+            .run(),
+      })),
+      {
+        title: 'Equation',
+        hint: 'KaTeX',
+        run: () => editor?.chain().focus().insertContent({ type: 'equation' }).run(),
+      },
+      {
+        title: 'Callout',
+        hint: '💡',
+        run: () =>
+          editor
+            ?.chain()
+            .focus()
+            .insertContent({ type: 'callout', content: [{ type: 'paragraph' }] })
+            .run(),
+      },
+      {
+        title: 'Toggle list',
+        hint: '▸',
+        run: () =>
+          editor
+            ?.chain()
+            .focus()
+            .insertContent({ type: 'toggle', content: [{ type: 'paragraph' }] })
+            .run(),
+      },
+      {
+        title: 'Toggle heading 1',
+        hint: '▸ Large',
+        run: () =>
+          editor
+            ?.chain()
+            .focus()
+            .insertContent({ type: 'toggle', attrs: { headingLevel: 1 }, content: [{ type: 'paragraph' }] })
+            .run(),
+      },
+      {
+        title: 'Toggle heading 2',
+        hint: '▸ Medium',
+        run: () =>
+          editor
+            ?.chain()
+            .focus()
+            .insertContent({ type: 'toggle', attrs: { headingLevel: 2 }, content: [{ type: 'paragraph' }] })
+            .run(),
+      },
+      {
+        title: 'Toggle heading 3',
+        hint: '▸ Small',
+        run: () =>
+          editor
+            ?.chain()
+            .focus()
+            .insertContent({ type: 'toggle', attrs: { headingLevel: 3 }, content: [{ type: 'paragraph' }] })
+            .run(),
+      },
       {
         title: 'Image',
         hint: 'Upload',
@@ -417,7 +579,7 @@ function EditorInstance({
       />
 
       <BubbleMenu editor={editor} tippyOptions={{ duration: 100 }}>
-        <SelectionToolbar editor={editor} />
+        <SelectionToolbar editor={editor} pageId={pageId} />
       </BubbleMenu>
 
       <EditorContent editor={editor} />
@@ -446,6 +608,8 @@ function EditorInstance({
           }}
         />
       )}
+
+      {tableHandle && <TableToolbar editor={editor} handle={tableHandle} />}
 
       {dropIndicatorTop !== null && (
         <div
@@ -536,7 +700,9 @@ function EditorInstance({
  * Selection toolbar (§15) — appears above a non-empty text selection via
  * Tiptap's `BubbleMenu` (positioning handled entirely by the library).
  */
-function SelectionToolbar({ editor }: { editor: Editor }) {
+function SelectionToolbar({ editor, pageId }: { editor: Editor; pageId: string }) {
+  const [menu, setMenu] = useState<'text-color' | 'highlight' | 'link' | null>(null);
+
   const buttonCls = (active: boolean) =>
     `flex h-7 w-7 items-center justify-center rounded text-sm ${
       active
@@ -545,7 +711,7 @@ function SelectionToolbar({ editor }: { editor: Editor }) {
     }`;
 
   return (
-    <div className="flex items-center gap-0.5 rounded-lg bg-zinc-900 p-1 shadow-lg dark:bg-zinc-100">
+    <div className="relative flex items-center gap-0.5 rounded-lg bg-zinc-900 p-1 shadow-lg dark:bg-zinc-100">
       <button
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => editor.chain().focus().toggleBold().run()}
@@ -564,6 +730,14 @@ function SelectionToolbar({ editor }: { editor: Editor }) {
       </button>
       <button
         onMouseDown={(e) => e.preventDefault()}
+        onClick={() => editor.chain().focus().toggleUnderline().run()}
+        className={`${buttonCls(editor.isActive('underline'))} underline`}
+        title="Underline"
+      >
+        U
+      </button>
+      <button
+        onMouseDown={(e) => e.preventDefault()}
         onClick={() => editor.chain().focus().toggleStrike().run()}
         className={`${buttonCls(editor.isActive('strike'))} line-through`}
         title="Strikethrough"
@@ -578,6 +752,197 @@ function SelectionToolbar({ editor }: { editor: Editor }) {
       >
         {'</>'}
       </button>
+      <button
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => editor.chain().focus().toggleSubscript().run()}
+        className={buttonCls(editor.isActive('subscript'))}
+        title="Subscript"
+      >
+        x₂
+      </button>
+      <button
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => editor.chain().focus().toggleSuperscript().run()}
+        className={buttonCls(editor.isActive('superscript'))}
+        title="Superscript"
+      >
+        x²
+      </button>
+      <button
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setMenu((m) => (m === 'text-color' ? null : 'text-color'))}
+        className={buttonCls(editor.isActive('textStyle') || menu === 'text-color')}
+        title="Text color"
+      >
+        A
+      </button>
+      <button
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setMenu((m) => (m === 'highlight' ? null : 'highlight'))}
+        className={buttonCls(editor.isActive('highlight') || menu === 'highlight')}
+        title="Highlight color"
+      >
+        <span className="rounded-sm bg-yellow-300 px-0.5 text-zinc-900">H</span>
+      </button>
+      <button
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setMenu((m) => (m === 'link' ? null : 'link'))}
+        className={buttonCls(editor.isActive('link') || menu === 'link')}
+        title="Link"
+      >
+        🔗
+      </button>
+
+      {menu === 'text-color' && (
+        <ColorSwatchMenu
+          colors={MARK_COLORS}
+          pick={(c) => c.fg}
+          onSelect={(color) => {
+            editor.chain().focus().setColor(color).run();
+            setMenu(null);
+          }}
+          onClear={() => {
+            editor.chain().focus().unsetColor().run();
+            setMenu(null);
+          }}
+        />
+      )}
+      {menu === 'highlight' && (
+        <ColorSwatchMenu
+          colors={MARK_COLORS}
+          pick={(c) => c.bg}
+          onSelect={(color) => {
+            editor.chain().focus().setHighlight({ color }).run();
+            setMenu(null);
+          }}
+          onClear={() => {
+            editor.chain().focus().unsetHighlight().run();
+            setMenu(null);
+          }}
+        />
+      )}
+      {menu === 'link' && (
+        <LinkMenu
+          editor={editor}
+          pageId={pageId}
+          onClose={() => setMenu(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ColorSwatchMenu({
+  colors,
+  pick,
+  onSelect,
+  onClear,
+}: {
+  colors: typeof MARK_COLORS;
+  pick: (c: (typeof MARK_COLORS)[number]) => string;
+  onSelect: (color: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="absolute left-0 top-full z-50 mt-1 flex w-48 flex-wrap gap-1 rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+      <button
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onClear}
+        className="mb-1 w-full rounded px-2 py-1 text-left text-xs text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+      >
+        Default
+      </button>
+      {colors.map((c) => (
+        <button
+          key={c.name}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => onSelect(pick(c))}
+          title={c.label}
+          className="h-6 w-6 rounded-full border border-zinc-200 dark:border-zinc-700"
+          style={{ backgroundColor: pick(c) }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Link popover (§12A.2): a URL goes in as an external link (opens in a new
+ * tab); anything else is treated as a page-title search and lists matches
+ * from the already-fetched `['pages']` query — selecting one links to
+ * `/{pageId}` with no `target`, so it navigates in the same tab via the
+ * `handleClick` router.push wiring above. */
+function LinkMenu({ editor, pageId, onClose }: { editor: Editor; pageId: string; onClose: () => void }) {
+  const [query, setQuery] = useState('');
+  const { data: pages = [] } = useQuery({ queryKey: ['pages'], queryFn: api.listPages });
+
+  const isUrl = /^https?:\/\/\S+$/.test(query.trim());
+  const matches = isUrl
+    ? []
+    : pages
+        .filter((p) => !p.isArchived && p.id !== pageId && p.title.toLowerCase().includes(query.trim().toLowerCase()))
+        .slice(0, 6);
+
+  const applyExternal = () => {
+    const href = query.trim();
+    if (!href) return;
+    editor.chain().focus().extendMarkRange('link').setLink({ href, target: '_blank' }).run();
+    onClose();
+  };
+
+  const applyInternal = (targetPageId: string) => {
+    editor.chain().focus().extendMarkRange('link').setLink({ href: `/${targetPageId}`, target: null }).run();
+    onClose();
+  };
+
+  return (
+    <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+      <input
+        autoFocus
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && isUrl) applyExternal();
+          if (e.key === 'Escape') onClose();
+        }}
+        placeholder="Paste a link or search pages…"
+        className="w-full rounded border border-zinc-200 bg-transparent px-2 py-1 text-sm text-zinc-900 outline-none focus:border-zinc-400 dark:border-zinc-700 dark:text-zinc-100"
+      />
+      {isUrl && (
+        <button
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={applyExternal}
+          className="mt-1 w-full rounded px-2 py-1 text-left text-sm text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        >
+          Link to {query.trim()}
+        </button>
+      )}
+      {!isUrl && query.trim() && matches.length === 0 && (
+        <p className="mt-1 px-2 py-1 text-xs text-zinc-400">No matching pages</p>
+      )}
+      {!isUrl &&
+        matches.map((p) => (
+          <button
+            key={p.id}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => applyInternal(p.id)}
+            className="mt-1 flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-sm text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            <span>{p.icon ?? '📄'}</span>
+            <span className="truncate">{p.title || 'Untitled'}</span>
+          </button>
+        ))}
+      {editor.isActive('link') && (
+        <button
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            editor.chain().focus().unsetLink().run();
+            onClose();
+          }}
+          className="mt-1 w-full rounded px-2 py-1 text-left text-xs text-red-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        >
+          Remove link
+        </button>
+      )}
     </div>
   );
 }
@@ -653,6 +1018,53 @@ function SlashMenu({
           <span className="text-xs text-zinc-400">{item.hint}</span>
         </button>
       ))}
+    </div>
+  );
+}
+
+/** Row/column menu (§12B.1's "table block ... + menu baris/kolom") — a small
+ * fixed toolbar above whichever table the cursor is in, wired straight to
+ * `@tiptap/extension-table`'s built-in commands (no bespoke table-editing
+ * logic of our own). */
+function TableToolbar({ editor, handle }: { editor: Editor; handle: TableHandleState }) {
+  const btnCls =
+    'rounded px-2 py-1 text-xs text-zinc-100 hover:bg-zinc-700 dark:text-zinc-800 dark:hover:bg-zinc-300';
+  return (
+    <div
+      className="fixed z-40 flex items-center gap-0.5 rounded-lg bg-zinc-900 p-1 shadow-lg dark:bg-zinc-100"
+      style={{ top: handle.top - 40, left: handle.left, width: handle.width }}
+    >
+      <button onMouseDown={(e) => e.preventDefault()} onClick={() => editor.chain().focus().addRowBefore().run()} className={btnCls} title="Insert row above">
+        +Row↑
+      </button>
+      <button onMouseDown={(e) => e.preventDefault()} onClick={() => editor.chain().focus().addRowAfter().run()} className={btnCls} title="Insert row below">
+        +Row↓
+      </button>
+      <button onMouseDown={(e) => e.preventDefault()} onClick={() => editor.chain().focus().deleteRow().run()} className={btnCls} title="Delete row">
+        −Row
+      </button>
+      <span className="mx-0.5 h-4 w-px bg-zinc-700 dark:bg-zinc-300" />
+      <button onMouseDown={(e) => e.preventDefault()} onClick={() => editor.chain().focus().addColumnBefore().run()} className={btnCls} title="Insert column before">
+        +Col←
+      </button>
+      <button onMouseDown={(e) => e.preventDefault()} onClick={() => editor.chain().focus().addColumnAfter().run()} className={btnCls} title="Insert column after">
+        +Col→
+      </button>
+      <button onMouseDown={(e) => e.preventDefault()} onClick={() => editor.chain().focus().deleteColumn().run()} className={btnCls} title="Delete column">
+        −Col
+      </button>
+      <span className="mx-0.5 h-4 w-px bg-zinc-700 dark:bg-zinc-300" />
+      <button onMouseDown={(e) => e.preventDefault()} onClick={() => editor.chain().focus().toggleHeaderRow().run()} className={btnCls} title="Toggle header row">
+        Header
+      </button>
+      <button
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => editor.chain().focus().deleteTable().run()}
+        className={`${btnCls} text-red-300 dark:text-red-600`}
+        title="Delete table"
+      >
+        Delete table
+      </button>
     </div>
   );
 }

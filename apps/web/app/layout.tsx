@@ -25,6 +25,18 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        {/* KaTeX (§29A, Sprint 16): self-hosted from public/katex/, copied
+            from node_modules at build time — never a CDN link (§29A.1
+            forbids the app fetching third-party assets client-side outside
+            explicit media/embeds). Must live inside an explicit <head> —
+            rendering it as a direct child of <html> is invalid HTML and
+            triggers a hydration-mismatch dev overlay that then blocks every
+            click underneath it (confirmed by hand: every e2e test failed
+            with "<nextjs-portal> intercepts pointer events" until this was
+            fixed). */}
+        <link rel="stylesheet" href="/katex/katex.min.css" />
+      </head>
       <body className="h-screen bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100">
         <Providers>
           <KeyboardShortcuts />

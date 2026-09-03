@@ -14,9 +14,18 @@ const REGISTERED_KEYS = [
   'taskItem',
   'image',
   'mermaid',
+  'callout',
+  'toggle',
+  'table',
+  'tableRow',
+  'tableHeader',
+  'tableCell',
+  'columns',
+  'column',
+  'equation',
 ];
 
-function text(value: string, marks?: Array<{ type: string }>) {
+function text(value: string, marks?: Array<{ type: string; attrs?: Record<string, unknown> }>) {
   return { type: 'text', text: value, ...(marks ? { marks } : {}) };
 }
 
@@ -41,6 +50,65 @@ describe('BlockTypeRegistry', () => {
     expect(def.toHtml(node)).toBe('<p><strong>hi</strong></p>');
     expect(def.toMarkdown(node)).toBe('**hi**');
     expect(def.toPlainText(node)).toBe('hi');
+  });
+
+  it('paragraph serializes underline/subscript/superscript to html only (§12A.5)', () => {
+    const def = BlockTypeRegistry.get('paragraph')!;
+    const node = {
+      type: 'paragraph',
+      content: [
+        text('u', [{ type: 'underline' }]),
+        text('sub', [{ type: 'subscript' }]),
+        text('sup', [{ type: 'superscript' }]),
+      ],
+    };
+    expect(def.toHtml(node)).toBe('<p><u>u</u><sub>sub</sub><sup>sup</sup></p>');
+    // No Markdown syntax for these — text survives, formatting doesn't.
+    expect(def.toMarkdown(node)).toBe('usubsup');
+    expect(def.toPlainText(node)).toBe('usubsup');
+  });
+
+  it('paragraph serializes highlight to ==x== markdown and a colored <mark> in html', () => {
+    const def = BlockTypeRegistry.get('paragraph')!;
+    const plain = { type: 'paragraph', content: [text('hi', [{ type: 'highlight' }])] };
+    expect(def.toHtml(plain)).toBe('<p><mark>hi</mark></p>');
+    expect(def.toMarkdown(plain)).toBe('==hi==');
+
+    const colored = {
+      type: 'paragraph',
+      content: [text('hi', [{ type: 'highlight', attrs: { color: 'hsl(var(--mark-bg-yellow))' } }])],
+    };
+    expect(def.toHtml(colored)).toBe(
+      '<p><mark style="background-color: hsl(var(--mark-bg-yellow)); color: inherit">hi</mark></p>',
+    );
+  });
+
+  it('paragraph serializes textStyle color to html only (no markdown syntax)', () => {
+    const def = BlockTypeRegistry.get('paragraph')!;
+    const node = {
+      type: 'paragraph',
+      content: [text('hi', [{ type: 'textStyle', attrs: { color: 'hsl(var(--mark-fg-red))' } }])],
+    };
+    expect(def.toHtml(node)).toBe('<p><span style="color: hsl(var(--mark-fg-red))">hi</span></p>');
+    expect(def.toMarkdown(node)).toBe('hi');
+  });
+
+  it('paragraph serializes link marks to <a> html and [text](href) markdown', () => {
+    const def = BlockTypeRegistry.get('paragraph')!;
+    const external = {
+      type: 'paragraph',
+      content: [text('site', [{ type: 'link', attrs: { href: 'https://example.com' } }])],
+    };
+    expect(def.toHtml(external)).toBe(
+      '<p><a href="https://example.com" target="_blank" rel="noopener noreferrer">site</a></p>',
+    );
+    expect(def.toMarkdown(external)).toBe('[site](https://example.com)');
+
+    const internal = {
+      type: 'paragraph',
+      content: [text('Other page', [{ type: 'link', attrs: { href: '/abc-123' } }])],
+    };
+    expect(def.toHtml(internal)).toBe('<p><a href="/abc-123">Other page</a></p>');
   });
 
   it('heading uses attrs.level', () => {
@@ -113,5 +181,93 @@ describe('BlockTypeRegistry', () => {
     const def = BlockTypeRegistry.get('horizontalRule')!;
     expect(def.toHtml({ type: 'horizontalRule' })).toBe('<hr>');
     expect(def.toPlainText({ type: 'horizontalRule' })).toBe('');
+  });
+
+  it('callout serializes icon + nested block content', () => {
+    const def = BlockTypeRegistry.get('callout')!;
+    const node = {
+      type: 'callout',
+      attrs: { icon: '⚠️' },
+      content: [{ type: 'paragraph', content: [text('careful')] }],
+    };
+    expect(def.toHtml(node)).toBe('<div data-type="callout"><span>⚠️</span><div><p>careful</p></div></div>');
+    expect(def.toMarkdown(node)).toBe('> ⚠️ careful');
+    expect(def.toPlainText(node)).toBe('careful');
+  });
+
+  it('callout defaults to a lightbulb icon', () => {
+    const def = BlockTypeRegistry.get('callout')!;
+    const node = { type: 'callout', content: [{ type: 'paragraph', content: [text('note')] }] };
+    expect(def.toMarkdown(node)).toBe('> 💡 note');
+  });
+
+  it('toggle serializes the first child as the always-visible summary', () => {
+    const def = BlockTypeRegistry.get('toggle')!;
+    const node = {
+      type: 'toggle',
+      content: [
+        { type: 'paragraph', content: [text('Summary')] },
+        { type: 'paragraph', content: [text('Hidden body')] },
+      ],
+    };
+    expect(def.toHtml(node)).toBe('<details><summary>Summary</summary><p>Hidden body</p></details>');
+    expect(def.toMarkdown(node)).toBe('Summary\nHidden body');
+    expect(def.toPlainText(node)).toBe('Summary\nHidden body');
+  });
+
+  it('toggle with headingLevel prefixes the summary with # in markdown', () => {
+    const def = BlockTypeRegistry.get('toggle')!;
+    const node = {
+      type: 'toggle',
+      attrs: { headingLevel: 2 },
+      content: [{ type: 'paragraph', content: [text('Section')] }],
+    };
+    expect(def.toMarkdown(node)).toBe('## Section');
+  });
+
+  function tableRow(...cells: string[]) {
+    return {
+      type: 'tableRow',
+      content: cells.map((c) => ({ type: 'tableCell', content: [{ type: 'paragraph', content: [text(c)] }] })),
+    };
+  }
+
+  it('table serializes to a GFM table in markdown, treating the first row as the header', () => {
+    const def = BlockTypeRegistry.get('table')!;
+    const node = { type: 'table', content: [tableRow('Name', 'Age'), tableRow('Ada', '30'), tableRow('Grace', '40')] };
+    expect(def.toMarkdown(node)).toBe(
+      '| Name | Age |\n| --- | --- |\n| Ada | 30 |\n| Grace | 40 |',
+    );
+    expect(def.toPlainText(node)).toBe('Name\tAge\nAda\t30\nGrace\t40');
+  });
+
+  it('table serializes to a real <table> in html', () => {
+    const def = BlockTypeRegistry.get('table')!;
+    const node = { type: 'table', content: [tableRow('A', 'B')] };
+    expect(def.toHtml(node)).toBe('<table><tr><td><p>A</p></td><td><p>B</p></td></tr></table>');
+  });
+
+  it('table with no rows serializes to an empty markdown string', () => {
+    const def = BlockTypeRegistry.get('table')!;
+    expect(def.toMarkdown({ type: 'table', content: [] })).toBe('');
+  });
+
+  it('equation round-trips the raw LaTeX source', () => {
+    const def = BlockTypeRegistry.get('equation')!;
+    const node = { type: 'equation', attrs: { latex: 'E = mc^2' } };
+    expect(def.toMarkdown(node)).toBe('$$E = mc^2$$');
+    expect(def.toPlainText(node)).toBe('E = mc^2');
+    expect(def.toHtml(node)).toBe('<div data-type="equation">$$E = mc^2$$</div>');
+  });
+
+  it('paragraph serializes an inline equation node inside its text run', () => {
+    const def = BlockTypeRegistry.get('paragraph')!;
+    const node = {
+      type: 'paragraph',
+      content: [text('The answer is '), { type: 'inlineEquation', attrs: { latex: '42' } }],
+    };
+    expect(def.toMarkdown(node)).toBe('The answer is $42$');
+    expect(def.toPlainText(node)).toBe('The answer is 42');
+    expect(def.toHtml(node)).toBe('<p>The answer is <span data-type="inline-equation">$42$</span></p>');
   });
 });
