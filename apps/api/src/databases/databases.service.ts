@@ -1,5 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE_DB, DrizzleDB, DrizzleTx } from '../db/drizzle.provider';
 import { remapRowValues, remapViewConfig } from './duplicate.lib';
 import {
@@ -194,12 +194,40 @@ export class DatabasesService {
     id?: string,
   ): Promise<DatabaseRow> {
     await this.ensureDatabase(databaseId);
-    const position = await this.nextRowPosition(databaseId);
-    const [row] = await this.db
-      .insert(databaseRows)
-      .values({ ...(id ? { id } : {}), databaseId, values: values ?? {}, position })
-      .returning();
-    return row;
+
+    return this.db.transaction(async (tx) => {
+      const position = await this.nextRowPosition(databaseId, tx);
+
+      // Row-locked so two concurrent creates can't allocate the same
+      // unique_id_seq (§20A.3 — config.nextValue is the counter of record).
+      const [uniqueIdProperty] = await tx
+        .select()
+        .from(databaseProperties)
+        .where(and(eq(databaseProperties.databaseId, databaseId), eq(databaseProperties.type, 'unique_id')))
+        .for('update');
+
+      let uniqueIdSeq: number | null = null;
+      if (uniqueIdProperty) {
+        const config = (uniqueIdProperty.config ?? {}) as { prefix?: string; nextValue?: number };
+        uniqueIdSeq = config.nextValue ?? 1;
+        await tx
+          .update(databaseProperties)
+          .set({ config: { ...config, nextValue: uniqueIdSeq + 1 } })
+          .where(eq(databaseProperties.id, uniqueIdProperty.id));
+      }
+
+      const [row] = await tx
+        .insert(databaseRows)
+        .values({
+          ...(id ? { id } : {}),
+          databaseId,
+          values: values ?? {},
+          position,
+          uniqueIdSeq,
+        })
+        .returning();
+      return row;
+    });
   }
 
   async updateRow(id: string, values: Record<string, unknown>): Promise<DatabaseRow> {
@@ -299,8 +327,8 @@ export class DatabasesService {
     return rows[0].max + 1;
   }
 
-  private async nextRowPosition(databaseId: string): Promise<number> {
-    const rows = await this.db
+  private async nextRowPosition(databaseId: string, tx: DrizzleTx | DrizzleDB = this.db): Promise<number> {
+    const rows = await tx
       .select({ max: sql<number>`coalesce(max(${databaseRows.position}), -1)` })
       .from(databaseRows)
       .where(eq(databaseRows.databaseId, databaseId));

@@ -9,6 +9,7 @@ import type {
   CanvasData,
   DatabaseAggregate,
   DatabaseProperty,
+  DatabaseQueryResult,
   DatabaseRow,
   DatabaseView,
   LinkPreview,
@@ -17,6 +18,7 @@ import type {
   PageType,
   PropertyType,
   SearchHit,
+  ViewConfig,
 } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
@@ -205,6 +207,15 @@ export const api = {
     }),
   deleteView: (id: string) =>
     request<{ id: string; deleted: boolean }>(`/database-views/${id}`, { method: 'DELETE' }),
+  /** The one path that reads rows — filter/sort/group/aggregation all run server-side (§22A). */
+  queryDatabase: (
+    databaseId: string,
+    body: { viewId?: string; overrides?: Partial<ViewConfig>; cursor?: string; limit?: number },
+  ) =>
+    request<DatabaseQueryResult>(`/databases/${databaseId}/query`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   search: (q: string) => request<SearchHit[]>(`/search?q=${encodeURIComponent(q)}`),
   exportWorkspace: () => request<Record<string, unknown>>('/export/json'),

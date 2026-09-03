@@ -1,4 +1,4 @@
-import type { DatabaseRow } from '@/lib/types';
+import type { CalculationId, DatabaseRow, FilterGroup, ViewConfig } from '@/lib/types';
 
 export interface Filter {
   propertyId: string;
@@ -52,6 +52,29 @@ export function applyFilter(rows: DatabaseRow[], filter: Filter): DatabaseRow[] 
         return true;
     }
   });
+}
+
+/**
+ * Client-side defaults for whatever `database_views.config` currently holds
+ * (§21A) — full validation and migration is server-side (`migrateViewConfig`
+ * in `@memoire/validation`, run on every read/write of `POST /query` and
+ * `PATCH /database-views/:id`); this only fills what the UI reads directly,
+ * so a not-yet-saved or pre-Sprint-18 config never crashes a render.
+ */
+export function normalizeViewConfig(raw: Record<string, unknown> | null | undefined): ViewConfig {
+  const r = raw ?? {};
+  return {
+    version: 1,
+    filter: (r.filter as FilterGroup | null) ?? null,
+    sorts: (r.sorts as ViewConfig['sorts']) ?? [],
+    properties: (r.properties as ViewConfig['properties']) ?? [],
+    calculations: (r.calculations as Record<string, CalculationId>) ?? {},
+    pageSize: (r.pageSize as number) ?? 50,
+    openAs: (r.openAs as ViewConfig['openAs']) ?? 'side',
+    locked: (r.locked as boolean) ?? false,
+    search: (r.search as string) ?? '',
+    ...r,
+  };
 }
 
 export function applySort(rows: DatabaseRow[], sort: Sort): DatabaseRow[] {

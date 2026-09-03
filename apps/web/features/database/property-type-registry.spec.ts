@@ -7,9 +7,17 @@ const REGISTERED_KEYS: PropertyType[] = [
   'text',
   'number',
   'select',
+  'multi_select',
+  'status',
   'checkbox',
   'date',
   'url',
+  'email',
+  'phone',
+  'files',
+  'created_time',
+  'last_edited_time',
+  'unique_id',
 ];
 
 describe('PropertyTypeRegistry', () => {
@@ -44,6 +52,35 @@ describe('PropertyTypeRegistry', () => {
     const def = PropertyTypeRegistry.get('text')!;
     expect(def.toCsv('a, "b"')).toBe('"a, ""b"""');
   });
+
+  it('derived properties (created_time, last_edited_time, unique_id) are not editable', () => {
+    expect(PropertyTypeRegistry.get('created_time')!.editable).toBe(false);
+    expect(PropertyTypeRegistry.get('last_edited_time')!.editable).toBe(false);
+    expect(PropertyTypeRegistry.get('unique_id')!.editable).toBe(false);
+  });
+
+  it('every other property type is editable', () => {
+    for (const def of PropertyTypeRegistry.list()) {
+      if (['created_time', 'last_edited_time', 'unique_id'].includes(def.key)) continue;
+      expect(def.editable).toBe(true);
+    }
+  });
+
+  it('number offers numeric aggregate functions, checkbox does not', () => {
+    expect(PropertyTypeRegistry.get('number')!.calculations).toContain('sum');
+    expect(PropertyTypeRegistry.get('checkbox')!.calculations).not.toContain('sum');
+    expect(PropertyTypeRegistry.get('checkbox')!.calculations).toContain('checked');
+  });
+
+  it('checkbox only offers the "is" filter operator', () => {
+    expect(PropertyTypeRegistry.get('checkbox')!.filterOperators).toEqual(['is']);
+  });
+
+  it('multi_select offers containment operators, not "is"', () => {
+    const ops = PropertyTypeRegistry.get('multi_select')!.filterOperators;
+    expect(ops).toContain('contains');
+    expect(ops).not.toContain('is');
+  });
 });
 
 describe('rowToPlainText', () => {
@@ -54,6 +91,7 @@ describe('rowToPlainText', () => {
       pageId: null,
       values: { title: 'Alpha', done: true, count: 3 },
       position: 0,
+      uniqueIdSeq: null,
       createdAt: '',
       updatedAt: '',
     };

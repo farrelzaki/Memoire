@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { createPropertySchema, updateRowSchema } from './databases.schema';
 
 describe('createPropertySchema', () => {
-  it('accepts a valid property', () => {
+  it('accepts a valid property, filling per-type config defaults', () => {
     const result = createPropertySchema.parse({ name: 'Status', type: 'select' });
-    expect(result).toEqual({ name: 'Status', type: 'select' });
+    expect(result).toEqual({ name: 'Status', type: 'select', config: { options: [] } });
   });
 
   it('rejects an unknown property type', () => {

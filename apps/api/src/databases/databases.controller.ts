@@ -8,7 +8,9 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
+import { DatabaseQueryRequestDto, databaseQueryRequestSchema } from '@memoire/validation';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
+import { DatabaseQueryService } from './database-query.service';
 import {
   CreatePropertyDto,
   createPropertySchema,
@@ -26,11 +28,22 @@ import { DatabasesService } from './databases.service';
 
 @Controller()
 export class DatabasesController {
-  constructor(private readonly databasesService: DatabasesService) {}
+  constructor(
+    private readonly databasesService: DatabasesService,
+    private readonly databaseQueryService: DatabaseQueryService,
+  ) {}
 
   @Get('databases/by-page/:pageId')
   getByPage(@Param('pageId', ParseUUIDPipe) pageId: string) {
     return this.databasesService.getByPage(pageId);
+  }
+
+  @Post('databases/:id/query')
+  query(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(databaseQueryRequestSchema)) body: DatabaseQueryRequestDto,
+  ) {
+    return this.databaseQueryService.query(id, body);
   }
 
   @Post('databases/:id/properties')

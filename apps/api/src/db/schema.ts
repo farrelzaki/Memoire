@@ -156,6 +156,10 @@ export const databaseRows = pgTable(
     pageId: uuid('page_id').references(() => pages.id),
     values: jsonb('values').$type<Record<string, unknown>>(),
     position: integer('position').notNull().default(0),
+    // The row's permanent number for a `unique_id` property (§20A.2) — assigned
+    // once at creation from that property's config.nextValue counter, never
+    // reassigned. Null for databases with no unique_id property.
+    uniqueIdSeq: integer('unique_id_seq'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -165,6 +169,12 @@ export const databaseRows = pgTable(
   },
   (table) => ({
     databaseIdx: index('database_rows_database_idx').on(table.databaseId),
+    // §22A.5 — equality/containment filters (select, status, checkbox,
+    // multi_select) are servable by this index; range/sort on text/number/date
+    // are not (extraction+cast happens per-query, no expression index possible
+    // for dynamic property-id keys). Deliberate limit, not an oversight.
+    valuesGinIdx: index('database_rows_values_gin').using('gin', sql`${table.values} jsonb_path_ops`),
+    databasePositionIdx: index('database_rows_db_pos').on(table.databaseId, table.position),
   }),
 );
 

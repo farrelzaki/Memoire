@@ -23,8 +23,29 @@ describe('ViewTypeRegistry', () => {
     expect(ViewTypeRegistry.get('table')!.requiredProperties).toEqual([]);
   });
 
-  it('board supports grouping, table does not', () => {
+  it('board and table both support grouping (table ber-grup, §21A.1), calendar does not', () => {
     expect(ViewTypeRegistry.get('board')!.supportsGrouping).toBe(true);
-    expect(ViewTypeRegistry.get('table')!.supportsGrouping).toBe(false);
+    expect(ViewTypeRegistry.get('table')!.supportsGrouping).toBe(true);
+    expect(ViewTypeRegistry.get('calendar')!.supportsGrouping).toBe(false);
+  });
+
+  it('validates a config against the real per-type schema, not a passthrough', () => {
+    const table = ViewTypeRegistry.get('table')!;
+    const valid = {
+      version: 1,
+      filter: null,
+      sorts: [],
+      properties: [],
+      calculations: {},
+      pageSize: 50,
+      openAs: 'side',
+      locked: false,
+      search: '',
+      rowHeight: 'short',
+      wrapCells: false,
+      showRowNumbers: false,
+    };
+    expect(table.configSchema.safeParse(valid).success).toBe(true);
+    expect(table.configSchema.safeParse({ ...valid, rowHeight: 'huge' }).success).toBe(false);
   });
 });

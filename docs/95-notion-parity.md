@@ -47,12 +47,13 @@ DILUAR     mention @orang, komentar, suggested edit   -- melibatkan pengguna lai
 ## 71.3 Tipe properti database
 
 ```text
-ADA        title, text, number, select, checkbox, date, url
-BELUM      multi-select, status (dengan grup todo/doing/done), email, phone,
-           files & media (upload atau URL), format number (persen, mata uang, bar, ring),
-           rentang tanggal + waktu, reminder pada tanggal,
-           relation (satu & dua arah), rollup, formula,
-           created time, last edited time, unique ID
+ADA        title, text, number, select, multi-select, status (dengan grup todo/doing/done),
+           checkbox, date, url, email, phone, created time, last edited time, unique ID
+SEBAGIAN   files       -- properti & filter is_empty/is_not_empty ada, kolom tabel baca-saja,
+                          belum ada UI unggah (beda dari blok file/video/audio/pdf editor, §12B.2)
+           number      -- format persen/mata uang/bar/ring divalidasi skema, belum ada UI pengaturan
+BELUM      files & media unggah lewat sel database, rentang tanggal + waktu, reminder pada tanggal,
+           relation (satu & dua arah), rollup, formula
 DILUAR     person, created by, last edited by   -- melibatkan pengguna lain (§56.2)
 ```
 
@@ -71,25 +72,28 @@ DITUNDA    chart view  -- nilainya rendah untuk penggunaan pribadi, butuh §20B 
 ## 71.5 Konfigurasi view
 
 ```text
-SEBAGIAN   filter  -- tepat SATU filter, 5 operator, hidup di useState, hilang saat reload
-           sort    -- satu level, juga tidak tersimpan
-           group   -- hanya board, dipilih otomatis, tidak bisa diubah
-BELUM      grup filter AND/OR bersarang, operator per tipe properti,
-           multi-level sort, sub-group, visibilitas & urutan properti,
-           lebar kolom, row height, wrap cells, ukuran & pratinjau kartu,
+ADA        viewConfigSchema + migrateViewConfig, PERSISTENSI SEMUANYA lewat
+           database_views.config (§21A) -- filter, sort, kalkulasi, pageSize,
+           rowHeight & wrapCells (table) semuanya bertahan setelah reload
+           filter/sort/group/agregasi dijalankan server-side lewat POST /databases/:id/query,
+           keyset pagination (§22A)
+           grup filter AND/OR bersarang + operator penuh per tipe properti (mesin, §22A.3-4)
+           multi-sort hingga 10 level (mesin + UI chip "+ Sort")
+           visibilitas properti -- checkbox tampil/sembunyi per kolom
+SEBAGIAN   filter builder UI -- mesin mendukung grup AND/OR bersarang, UI baru satu aturan
+BELUM      sub-group, urutan & lebar kolom (dnd-kit, Sprint 21), ukuran & pratinjau kartu,
            pencarian dalam view, perilaku buka halaman (side/center/full), lock view
-
-           PERSISTENSI SEMUANYA -- ini gap tunggal terbesar (§21A)
 ```
 
 ## 71.6 Kalkulasi
 
 ```text
-BELUM      seluruhnya. 20 fungsi: count all / values / unique / empty / not empty,
+ADA        20 fungsi: count all / values / unique / empty / not empty,
            percent empty / not empty, sum, average, median, min, max, range,
            earliest date, latest date, date range,
            checked, unchecked, percent checked, percent unchecked
-           plus footer tabel dan kalkulasi per grup board
+           dihitung di SQL server-side (§20B.2), footer tabel per kolom,
+           kalkulasi per grup board
 ```
 
 ## 71.7 Struktur database

@@ -88,9 +88,17 @@ export type PropertyType =
   | 'text'
   | 'number'
   | 'select'
+  | 'multi_select'
+  | 'status'
   | 'checkbox'
   | 'date'
-  | 'url';
+  | 'url'
+  | 'email'
+  | 'phone'
+  | 'files'
+  | 'created_time'
+  | 'last_edited_time'
+  | 'unique_id';
 
 /** Mirrors the backend `databases` row (§10.5). */
 export interface Database {
@@ -118,6 +126,7 @@ export interface DatabaseRow {
   pageId: string | null;
   values: Record<string, unknown> | null;
   position: number;
+  uniqueIdSeq: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -136,6 +145,97 @@ export interface DatabaseView {
   type: string;
   config: Record<string, unknown> | null;
   position: number;
+}
+
+/** Mirrors `@memoire/validation`'s `FilterOperator` (§22A.3). */
+export type FilterOperator =
+  | 'is'
+  | 'is_not'
+  | 'contains'
+  | 'does_not_contain'
+  | 'starts_with'
+  | 'ends_with'
+  | 'is_empty'
+  | 'is_not_empty'
+  | '='
+  | '!='
+  | '>'
+  | '<'
+  | '>='
+  | '<='
+  | 'is_any_of'
+  | 'is_none_of'
+  | 'is_before'
+  | 'is_after'
+  | 'is_on_or_before'
+  | 'is_on_or_after'
+  | 'is_within';
+
+export type FilterValue = string | number | boolean | (string | number)[] | null;
+
+export interface FilterRule {
+  propertyId: string;
+  operator: FilterOperator;
+  value?: FilterValue;
+}
+
+export interface FilterGroup {
+  conjunction: 'and' | 'or';
+  rules: (FilterRule | FilterGroup)[];
+}
+
+/** The 20 aggregate functions (§20B.1), shared by column calculations and rollup. */
+export type CalculationId =
+  | 'count_all'
+  | 'count_values'
+  | 'count_unique'
+  | 'count_empty'
+  | 'count_not_empty'
+  | 'percent_empty'
+  | 'percent_not_empty'
+  | 'sum'
+  | 'average'
+  | 'median'
+  | 'min'
+  | 'max'
+  | 'range'
+  | 'earliest_date'
+  | 'latest_date'
+  | 'date_range'
+  | 'checked'
+  | 'unchecked'
+  | 'percent_checked'
+  | 'percent_unchecked';
+
+/** Mirrors `@memoire/validation`'s `ViewConfig` (§21A.1) — validated/migrated server-side, never held in React state. */
+export interface ViewConfig {
+  version: 1;
+  filter: FilterGroup | null;
+  sorts: Array<{ propertyId: string; direction: 'asc' | 'desc' }>;
+  properties: Array<{ propertyId: string; visible: boolean; width?: number }>;
+  calculations: Record<string, CalculationId>;
+  pageSize: number;
+  openAs: 'side' | 'center' | 'full';
+  locked: boolean;
+  search: string;
+  // Per-view-type fields (table/board/calendar/gallery) — see view-type-registry.ts.
+  [key: string]: unknown;
+}
+
+export interface DatabaseQueryGroup {
+  key: string | null;
+  count: number;
+  calculations: Record<string, unknown>;
+}
+
+/** Response of `POST /databases/:id/query` (§22A.1). */
+export interface DatabaseQueryResult {
+  rows: DatabaseRow[];
+  groups: DatabaseQueryGroup[] | null;
+  calculations: Record<string, unknown>;
+  total: number;
+  nextCursor: string | null;
+  computedAt: string;
 }
 
 /** A single search result from `GET /search` (§25). */

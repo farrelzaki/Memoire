@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyFilter, applySort, mergeRowValues } from './database.lib';
+import { applyFilter, applySort, mergeRowValues, normalizeViewConfig } from './database.lib';
 import type { DatabaseRow } from '@/lib/types';
 
 function row(id: string, values: Record<string, unknown>): DatabaseRow {
@@ -9,6 +9,7 @@ function row(id: string, values: Record<string, unknown>): DatabaseRow {
     pageId: null,
     values,
     position: 0,
+    uniqueIdSeq: null,
     createdAt: '',
     updatedAt: '',
   };
@@ -69,5 +70,40 @@ describe('mergeRowValues', () => {
   it('handles a row with no values yet', () => {
     const out = mergeRowValues(row('d', {} as Record<string, unknown>), 'status', 'Todo');
     expect(out).toEqual({ status: 'Todo' });
+  });
+});
+
+describe('normalizeViewConfig', () => {
+  it('fills every base default from a null config', () => {
+    const config = normalizeViewConfig(null);
+    expect(config).toMatchObject({
+      version: 1,
+      filter: null,
+      sorts: [],
+      properties: [],
+      calculations: {},
+      pageSize: 50,
+      openAs: 'side',
+      locked: false,
+      search: '',
+    });
+  });
+
+  it('preserves per-view-type fields already present (e.g. board groupBy)', () => {
+    const config = normalizeViewConfig({ groupBy: 'p1', cardSize: 'large' });
+    expect(config.groupBy).toBe('p1');
+    expect(config.cardSize).toBe('large');
+  });
+
+  it('keeps an already-populated filter/sorts/calculations as-is', () => {
+    const raw = {
+      filter: { conjunction: 'and' as const, rules: [{ propertyId: 'p1', operator: 'is' as const, value: 'x' }] },
+      sorts: [{ propertyId: 'p1', direction: 'desc' as const }],
+      calculations: { p1: 'sum' as const },
+    };
+    const config = normalizeViewConfig(raw);
+    expect(config.filter).toEqual(raw.filter);
+    expect(config.sorts).toEqual(raw.sorts);
+    expect(config.calculations).toEqual(raw.calculations);
   });
 });
