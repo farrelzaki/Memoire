@@ -4,13 +4,16 @@ import { queueMutation } from './offline-sync';
 import { isMutatingMethod } from './offline-queue';
 import type {
   Attachment,
+  Backlink,
   Block,
   CanvasData,
   DatabaseAggregate,
   DatabaseProperty,
   DatabaseRow,
   DatabaseView,
+  LinkPreview,
   Page,
+  PageSettings,
   PageType,
   PropertyType,
   SearchHit,
@@ -103,6 +106,7 @@ export interface UpdatePageInput {
   icon?: string | null;
   coverUrl?: string | null;
   isFavorite?: boolean;
+  settings?: PageSettings;
 }
 
 export const api = {
@@ -130,8 +134,14 @@ export const api = {
     id: string,
     body: { parentPageId?: string | null; position?: number },
   ) => request<Page>(`/pages/${id}/move`, { method: 'POST', body: JSON.stringify(body) }),
+  getBacklinks: (id: string) => request<Backlink[]>(`/pages/${id}/backlinks`),
+
+  getLinkPreview: (url: string) =>
+    request<LinkPreview>('/link-preview', { method: 'POST', body: JSON.stringify({ url }) }),
 
   listBlocks: (pageId: string) => request<Block[]>(`/pages/${pageId}/blocks`),
+  /** Resolves a block by id whether top-level or nested (§11E.4) — used by synced blocks. */
+  getBlock: (id: string) => request<Block>(`/blocks/${id}`),
   replaceBlocks: (pageId: string, blocks: BlockPayload[]) =>
     request<Block[]>(`/pages/${pageId}/blocks`, {
       method: 'PUT',

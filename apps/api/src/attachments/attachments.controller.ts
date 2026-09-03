@@ -25,7 +25,7 @@ export class AttachmentsController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: 10 * 1024 * 1024 },
+      limits: { fileSize: 200 * 1024 * 1024 },
     }),
   )
   upload(

@@ -9,6 +9,8 @@ import { DatabasesModule } from './databases/databases.module';
 import { DrizzleModule } from './db/drizzle.module';
 import { ExportModule } from './export/export.module';
 import { HealthModule } from './health/health.module';
+import { LinkPreviewModule } from './link-preview/link-preview.module';
+import { PageLinksModule } from './page-links/page-links.module';
 import { PagesModule } from './pages/pages.module';
 import { SearchModule } from './search/search.module';
 import { StorageModule } from './storage/storage.module';
@@ -21,6 +23,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     HealthModule,
     WorkspacesModule,
     PagesModule,
+    PageLinksModule,
     BlocksModule,
     DatabasesModule,
     StorageModule,
@@ -28,6 +31,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     SearchModule,
     ExportModule,
     WhiteboardModule,
+    LinkPreviewModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
 })

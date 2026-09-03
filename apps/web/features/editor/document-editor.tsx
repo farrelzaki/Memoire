@@ -3,7 +3,6 @@
 import type { Content } from '@tiptap/core';
 import Color from '@tiptap/extension-color';
 import Highlight from '@tiptap/extension-highlight';
-import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import Table from '@tiptap/extension-table';
 import TableCell from '@tiptap/extension-table-cell';
@@ -20,7 +19,7 @@ import { BubbleMenu, EditorContent, useEditor, type Editor } from '@tiptap/react
 import StarterKit from '@tiptap/starter-kit';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import type { EditorView } from '@tiptap/pm/view';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { api, attachmentContentUrl } from '@/lib/api';
@@ -28,14 +27,23 @@ import { blocksToDoc, docToBlocks, type TiptapDocument } from '@/lib/blocks';
 import type { Block, TiptapNode } from '@/lib/types';
 import { toast } from '@/stores/toast';
 import { BlockId } from './block-id';
+import { Bookmark } from './bookmark-node';
+import { Breadcrumb } from './breadcrumb-node';
 import { Callout } from './callout-node';
 import { Column, Columns } from './columns-node';
+import { Embed } from './embed-node';
 import { Equation, InlineEquation } from './equation-node';
 import { CodeBlockHighlight } from './code-block-highlight';
 import { CodeBlockShiki } from './code-block-node';
+import { ImageBlock } from './image-node';
+import { LinkToPage } from './link-to-page-node';
+import { AudioBlock, FileBlock, PdfBlock, VideoBlock } from './media-nodes';
 import { BlockTypeRegistry } from './block-type-registry';
 import { MARK_COLORS } from './mark-colors';
 import { MermaidBlock } from './mermaid-node';
+import { SubPage } from './sub-page-node';
+import { SyncedBlock } from './synced-block-node';
+import { TableOfContents } from './table-of-contents-node';
 import { Toggle } from './toggle-node';
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -161,6 +169,11 @@ function DocumentEditor({ pageId }: { pageId: string }) {
   return <EditorInstance key={pageId} pageId={pageId} initialBlocks={blocks} />;
 }
 
+const FONT_CLASSES: Record<string, string> = {
+  serif: 'font-serif',
+  mono: 'font-mono',
+};
+
 function EditorInstance({
   pageId,
   initialBlocks,
@@ -169,6 +182,12 @@ function EditorInstance({
   initialBlocks: Block[];
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  // Shares the ['page', pageId] cache entry the page shell already populated
+  // (app/[pageId]/page.tsx) — locked/font are page settings, not editor state.
+  const { data: page } = useQuery({ queryKey: ['page', pageId], queryFn: () => api.getPage(pageId) });
+  const locked = page?.settings.locked ?? false;
+  const fontClass = page?.settings.font ? FONT_CLASSES[page.settings.font] : undefined;
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [slash, setSlash] = useState<SlashState | null>(null);
   const [blockHandle, setBlockHandle] = useState<BlockHandleState | null>(null);
@@ -206,7 +225,7 @@ function EditorInstance({
       TaskList,
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder: "Type '/' for commands" }),
-      Image.configure({ allowBase64: true }),
+      ImageBlock,
       Underline,
       TextStyle,
       Color,
@@ -229,9 +248,21 @@ function EditorInstance({
       Column,
       Equation,
       InlineEquation,
+      SubPage,
+      LinkToPage,
+      Breadcrumb.configure({ pageId }),
+      TableOfContents,
+      SyncedBlock,
+      FileBlock.configure({ pageId }),
+      VideoBlock.configure({ pageId }),
+      AudioBlock.configure({ pageId }),
+      PdfBlock.configure({ pageId }),
+      Bookmark,
+      Embed,
       BlockId,
     ],
     content: blocksToDoc(initialBlocks) as unknown as Content,
+    editable: !locked,
     editorProps: {
       // Link clicks (§12A.2): `Link` is configured with `openOnClick: false` so
       // internal links (href starting with `/`) navigate via Next's router
@@ -329,6 +360,12 @@ function EditorInstance({
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, []);
+
+  // Lock page (§71.8): toggled from the page menu while this editor is
+  // already mounted, so `editable` at creation time isn't enough on its own.
+  useEffect(() => {
+    editor?.setEditable(!locked);
+  }, [editor, locked]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -445,8 +482,82 @@ function EditorInstance({
         hint: 'Diagram',
         run: () => editor?.chain().focus().insertContent({ type: 'mermaid' }).run(),
       },
+      {
+        title: 'Page',
+        hint: 'Sub-page',
+        run: async () => {
+          const child = await api.createPage({ parentPageId: pageId, title: 'Untitled' });
+          queryClient.invalidateQueries({ queryKey: ['pages'] });
+          editor?.chain().focus().insertContent({ type: 'subPage', attrs: { pageId: child.id } }).run();
+        },
+      },
+      {
+        title: 'Link to page',
+        hint: 'Reference',
+        run: () => editor?.chain().focus().insertContent({ type: 'linkToPage' }).run(),
+      },
+      {
+        title: 'Breadcrumb',
+        hint: "Page's ancestor trail",
+        run: () => editor?.chain().focus().insertContent({ type: 'breadcrumb' }).run(),
+      },
+      {
+        title: 'Table of contents',
+        hint: 'Outline',
+        run: () => editor?.chain().focus().insertContent({ type: 'tableOfContents' }).run(),
+      },
+      {
+        title: 'Synced block',
+        hint: 'Reuse elsewhere',
+        run: () =>
+          editor
+            ?.chain()
+            .focus()
+            .insertContent({ type: 'syncedBlock', content: [{ type: 'paragraph' }] })
+            .run(),
+      },
+      {
+        title: 'Synced block (existing)',
+        hint: "Paste another block's id",
+        run: () => {
+          const sourceBlockId = window.prompt("Source block's id");
+          if (sourceBlockId) {
+            editor?.chain().focus().insertContent({ type: 'syncedBlock', attrs: { sourceBlockId } }).run();
+          }
+        },
+      },
+      {
+        title: 'File',
+        hint: 'Upload or link',
+        run: () => editor?.chain().focus().insertContent({ type: 'fileBlock' }).run(),
+      },
+      {
+        title: 'Video',
+        hint: 'Upload or link',
+        run: () => editor?.chain().focus().insertContent({ type: 'video' }).run(),
+      },
+      {
+        title: 'Audio',
+        hint: 'Upload or link',
+        run: () => editor?.chain().focus().insertContent({ type: 'audio' }).run(),
+      },
+      {
+        title: 'PDF',
+        hint: 'Upload or link',
+        run: () => editor?.chain().focus().insertContent({ type: 'pdf' }).run(),
+      },
+      {
+        title: 'Bookmark',
+        hint: 'Link preview',
+        run: () => editor?.chain().focus().insertContent({ type: 'bookmark' }).run(),
+      },
+      {
+        title: 'Embed',
+        hint: 'Website',
+        run: () => editor?.chain().focus().insertContent({ type: 'embed' }).run(),
+      },
     ],
-    [editor, pickImage],
+    [editor, pickImage, pageId, queryClient],
   );
 
   const filteredItems = slash
@@ -582,9 +693,9 @@ function EditorInstance({
         <SelectionToolbar editor={editor} pageId={pageId} />
       </BubbleMenu>
 
-      <EditorContent editor={editor} />
+      <EditorContent editor={editor} className={fontClass} />
 
-      {slash && filteredItems.length > 0 && (
+      {!locked && slash && filteredItems.length > 0 && (
         <SlashMenu items={filteredItems} slash={slash} editor={editor} onSelect={selectItem} onClose={() => setSlash(null)} />
       )}
 

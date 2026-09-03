@@ -221,6 +221,9 @@ GET    /attachments/:id
 GET    /attachments/:id/content
 DELETE /attachments/:id
 
+Link preview
+POST   /link-preview                 -- BARU §29A.1, bookmark/embed, cache-first + penjaga SSRF
+
 Search
 GET    /search                       -- FTS + ranking + snippet (§25A)
 

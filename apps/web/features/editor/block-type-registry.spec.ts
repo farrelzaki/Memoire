@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BlockTypeRegistry } from './block-type-registry';
+import { BlockTypeRegistry, countWords } from './block-type-registry';
 
 const REGISTERED_KEYS = [
   'paragraph',
@@ -23,6 +23,17 @@ const REGISTERED_KEYS = [
   'columns',
   'column',
   'equation',
+  'subPage',
+  'linkToPage',
+  'breadcrumb',
+  'tableOfContents',
+  'syncedBlock',
+  'fileBlock',
+  'video',
+  'audio',
+  'pdf',
+  'bookmark',
+  'embed',
 ];
 
 function text(value: string, marks?: Array<{ type: string; attrs?: Record<string, unknown> }>) {
@@ -170,6 +181,28 @@ describe('BlockTypeRegistry', () => {
     expect(def.toPlainText(node)).toBe('A cat');
   });
 
+  it('image prefers the caption over alt text when both are set', () => {
+    const def = BlockTypeRegistry.get('image')!;
+    const node = { type: 'image', attrs: { src: '/x.png', alt: 'A cat', caption: 'My cat Steve' } };
+    expect(def.toPlainText(node)).toBe('My cat Steve');
+    expect(def.toMarkdown(node)).toBe('![A cat](/x.png)\n*My cat Steve*');
+    expect(def.toHtml(node)).toBe('<figure><img src="/x.png" alt="A cat"><figcaption>My cat Steve</figcaption></figure>');
+  });
+
+  it('image full-bleed renders full width, ignoring align', () => {
+    const def = BlockTypeRegistry.get('image')!;
+    const node = { type: 'image', attrs: { src: '/x.png', alt: '', fullBleed: true, align: 'left' } };
+    expect(def.toHtml(node)).toBe('<img src="/x.png" alt="" style="width:100%">');
+  });
+
+  it('image with a custom width and non-center align sets inline style', () => {
+    const def = BlockTypeRegistry.get('image')!;
+    const node = { type: 'image', attrs: { src: '/x.png', alt: '', width: 240, align: 'left' } };
+    expect(def.toHtml(node)).toBe(
+      '<img src="/x.png" alt="" style="display:block;margin-left:0;margin-right:auto;width:240px">',
+    );
+  });
+
   it('mermaid round-trips the raw diagram source', () => {
     const def = BlockTypeRegistry.get('mermaid')!;
     const node = { type: 'mermaid', attrs: { code: 'graph TD;\n  A --> B;' } };
@@ -260,6 +293,69 @@ describe('BlockTypeRegistry', () => {
     expect(def.toHtml(node)).toBe('<div data-type="equation">$$E = mc^2$$</div>');
   });
 
+  it('syncedBlock (source) serializes its own children', () => {
+    const def = BlockTypeRegistry.get('syncedBlock')!;
+    const node = {
+      type: 'syncedBlock',
+      attrs: { sourceBlockId: null },
+      content: [{ type: 'paragraph', content: [text('hello')] }],
+    };
+    expect(def.toPlainText(node)).toBe('hello');
+    expect(def.toMarkdown(node)).toBe('hello');
+    expect(def.toHtml(node)).toBe('<div data-type="synced-block"><p>hello</p></div>');
+  });
+
+  it('syncedBlock (copy) has no content to serialize on its own', () => {
+    const def = BlockTypeRegistry.get('syncedBlock')!;
+    const node = { type: 'syncedBlock', attrs: { sourceBlockId: 'abc-123' }, content: [] };
+    expect(def.toPlainText(node)).toBe('');
+    expect(def.toMarkdown(node)).toBe('');
+    expect(def.toHtml(node)).toBe('<div data-type="synced-block">Synced content</div>');
+  });
+
+  it('file block serializes a download link from an uploaded attachment', () => {
+    const def = BlockTypeRegistry.get('fileBlock')!;
+    const node = { type: 'fileBlock', attrs: { attachmentId: 'att-1', filename: 'report.pdf' } };
+    expect(def.toPlainText(node)).toBe('report.pdf');
+    expect(def.toMarkdown(node)).toContain('[report.pdf](');
+    expect(def.toHtml(node)).toContain('report.pdf</a>');
+  });
+
+  it('file block serializes nothing when neither an attachment nor a URL is set', () => {
+    const def = BlockTypeRegistry.get('fileBlock')!;
+    const node = { type: 'fileBlock', attrs: {} };
+    expect(def.toHtml(node)).toBe('');
+    expect(def.toMarkdown(node)).toBe('');
+  });
+
+  it('video block renders a <video> tag from a pasted URL', () => {
+    const def = BlockTypeRegistry.get('video')!;
+    const node = { type: 'video', attrs: { url: 'https://example.com/clip.mp4' } };
+    expect(def.toHtml(node)).toBe('<video src="https://example.com/clip.mp4" controls></video>');
+  });
+
+  it('bookmark serializes a link, preferring the fetched title', () => {
+    const def = BlockTypeRegistry.get('bookmark')!;
+    const node = { type: 'bookmark', attrs: { url: 'https://example.com', title: 'Example Site' } };
+    expect(def.toPlainText(node)).toBe('Example Site');
+    expect(def.toMarkdown(node)).toBe('[Example Site](https://example.com)');
+    expect(def.toHtml(node)).toBe('<a href="https://example.com" data-type="bookmark">Example Site</a>');
+  });
+
+  it('bookmark falls back to the raw URL when no title was fetched yet', () => {
+    const def = BlockTypeRegistry.get('bookmark')!;
+    const node = { type: 'bookmark', attrs: { url: 'https://example.com' } };
+    expect(def.toPlainText(node)).toBe('https://example.com');
+  });
+
+  it('embed serializes a sandboxed iframe', () => {
+    const def = BlockTypeRegistry.get('embed')!;
+    const node = { type: 'embed', attrs: { url: 'https://example.com/widget' } };
+    expect(def.toHtml(node)).toContain('sandbox="allow-scripts allow-same-origin allow-popups"');
+    expect(def.toMarkdown(node)).toBe('[Embed](https://example.com/widget)');
+    expect(def.toPlainText(node)).toBe('');
+  });
+
   it('paragraph serializes an inline equation node inside its text run', () => {
     const def = BlockTypeRegistry.get('paragraph')!;
     const node = {
@@ -269,5 +365,25 @@ describe('BlockTypeRegistry', () => {
     expect(def.toMarkdown(node)).toBe('The answer is $42$');
     expect(def.toPlainText(node)).toBe('The answer is 42');
     expect(def.toHtml(node)).toBe('<p>The answer is <span data-type="inline-equation">$42$</span></p>');
+  });
+});
+
+describe('countWords', () => {
+  it('sums plain-text word counts across top-level blocks', () => {
+    const blocks = [
+      { type: 'paragraph', content: { type: 'paragraph', content: [text('hello world')] } },
+      { type: 'heading', content: { type: 'heading', attrs: { level: 1 }, content: [text('one two three')] } },
+    ];
+    expect(countWords(blocks)).toBe(5);
+  });
+
+  it('ignores blocks with no content and unknown types', () => {
+    expect(countWords([{ type: 'horizontalRule', content: null }])).toBe(0);
+    expect(countWords([{ type: 'not-a-real-type', content: { type: 'not-a-real-type' } }])).toBe(0);
+  });
+
+  it('collapses runs of whitespace', () => {
+    const blocks = [{ type: 'paragraph', content: { type: 'paragraph', content: [text('  a   b  c ')] } }];
+    expect(countWords(blocks)).toBe(3);
   });
 });

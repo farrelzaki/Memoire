@@ -11,12 +11,18 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu';
+import { countWords } from '@/features/editor/block-type-registry';
 import { api } from '@/lib/api';
 import { downloadJson } from '@/lib/download';
 import { getSubtreeIds } from '@/lib/pages';
-import type { Page } from '@/lib/types';
-import { usePagePref, usePagePrefsStore } from '@/stores/page-prefs';
+import type { Page, PageSettings } from '@/lib/types';
 import { toastWithUndo } from '@/stores/toast';
+
+const FONT_OPTIONS: Array<{ value: NonNullable<PageSettings['font']>; label: string }> = [
+  { value: 'default', label: 'Default' },
+  { value: 'serif', label: 'Serif' },
+  { value: 'mono', label: 'Mono' },
+];
 
 /**
  * The page `⋯` menu — the per-page action surface Notion puts in the topbar:
@@ -27,14 +33,23 @@ export function PageMenu({ page }: { page: Page }) {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const prefs = usePagePref(page.id);
-  const toggleFullWidth = usePagePrefsStore((s) => s.toggleFullWidth);
-  const toggleSmallText = usePagePrefsStore((s) => s.toggleSmallText);
-
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['pages'] });
     queryClient.invalidateQueries({ queryKey: ['page', page.id] });
   };
+
+  const updateSettings = useMutation({
+    mutationFn: (patch: PageSettings) =>
+      api.updatePage(page.id, { settings: { ...page.settings, ...patch } }),
+    onSuccess: invalidate,
+  });
+
+  const { data: blocks = [] } = useQuery({
+    queryKey: ['blocks', page.id],
+    queryFn: () => api.listBlocks(page.id),
+    enabled: page.type === 'document',
+  });
+  const wordCount = countWords(blocks);
 
   const duplicate = useMutation({
     mutationFn: () => api.duplicatePage(page.id),
@@ -76,20 +91,58 @@ export function PageMenu({ page }: { page: Page }) {
       <DropdownMenuSeparator />
       <DropdownMenuItem
         onSelect={(e) => e.preventDefault()}
-        onClick={() => toggleFullWidth(page.id)}
+        onClick={() => updateSettings.mutate({ fullWidth: !page.settings.fullWidth })}
       >
         <span className="w-4 shrink-0 text-center text-zinc-400">↔</span>
         Full width
-        <span className="ml-auto text-xs text-zinc-400">{prefs.fullWidth ? 'On' : 'Off'}</span>
+        <span className="ml-auto text-xs text-zinc-400">
+          {page.settings.fullWidth ? 'On' : 'Off'}
+        </span>
       </DropdownMenuItem>
       <DropdownMenuItem
         onSelect={(e) => e.preventDefault()}
-        onClick={() => toggleSmallText(page.id)}
+        onClick={() => updateSettings.mutate({ smallText: !page.settings.smallText })}
       >
         <span className="w-4 shrink-0 text-center text-zinc-400">A</span>
         Small text
-        <span className="ml-auto text-xs text-zinc-400">{prefs.smallText ? 'On' : 'Off'}</span>
+        <span className="ml-auto text-xs text-zinc-400">
+          {page.settings.smallText ? 'On' : 'Off'}
+        </span>
       </DropdownMenuItem>
+      <DropdownMenuItem
+        onSelect={(e) => e.preventDefault()}
+        onClick={() => updateSettings.mutate({ locked: !page.settings.locked })}
+      >
+        <span className="w-4 shrink-0 text-center text-zinc-400">🔒</span>
+        Lock page
+        <span className="ml-auto text-xs text-zinc-400">
+          {page.settings.locked ? 'On' : 'Off'}
+        </span>
+      </DropdownMenuItem>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <span className="w-4 shrink-0 text-center text-zinc-400">Aa</span>
+          Font
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          {FONT_OPTIONS.map((opt) => (
+            <DropdownMenuItem
+              key={opt.value}
+              onClick={() => updateSettings.mutate({ font: opt.value })}
+            >
+              <span className="w-4 shrink-0 text-center text-zinc-400">
+                {(page.settings.font ?? 'default') === opt.value ? '✓' : ''}
+              </span>
+              {opt.label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      {page.type === 'document' && (
+        <p className="px-2 py-1.5 text-xs text-zinc-400">
+          {wordCount} {wordCount === 1 ? 'word' : 'words'}
+        </p>
+      )}
       <DropdownMenuSeparator />
       <DropdownMenuItem onClick={() => duplicate.mutate()}>
         <span className="w-4 shrink-0 text-center text-zinc-400">⧉</span>

@@ -24,6 +24,7 @@ export type UpdatePageInput = {
   icon?: string | null;
   coverUrl?: string | null;
   isFavorite?: boolean;
+  settings?: Record<string, unknown>;
 };
 
 @Injectable()

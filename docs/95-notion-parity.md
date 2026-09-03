@@ -21,15 +21,14 @@ DILUAR    tidak akan pernah ada -- semuanya karena melibatkan pengguna lain
 
 ```text
 ADA        paragraph, heading 1-3, bulleted list, numbered list, to-do,
-           quote, divider, code block, image, mermaid (di luar Notion)
+           quote, divider, code block, image (resize, align, caption, full-bleed),
+           mermaid (di luar Notion), toggle list, toggle heading 1-3, callout,
+           columns 2-5, table sederhana, equation block, inline equation,
+           sub-page, link-to-page, breadcrumb-block, table of contents,
+           synced block, video / audio / file / PDF (upload atau URL),
+           bookmark (pratinjau URL), embed ber-sandbox
 SEBAGIAN   code block   -- tanpa syntax highlight, pemilih bahasa, tombol salin
-           image        -- tanpa resize, align, caption
-BELUM      toggle list, toggle heading 1-3, callout, columns 2-5, table sederhana,
-           equation block, inline equation, sub-page, link-to-page, breadcrumb,
-           table of contents, synced block, template button,
-           video / audio / file / PDF (upload atau URL),
-           bookmark (pratinjau URL), embed ber-sandbox,
-           database inline, linked database view
+BELUM      template button, database inline, linked database view
 DITUNDA    button multi-aksi   -- template button menutup sebagian besar kebutuhannya
            blok AI             -- bersama integrasi pihak ketiga lain (§56.3)
 DILUAR     komentar per blok   -- melibatkan pengguna lain (§56.2)
@@ -110,12 +109,11 @@ DITUNDA    sinkronisasi database dari sumber eksternal   -- butuh integrasi akun
 ## 71.8 Fitur halaman
 
 ```text
-ADA        page icon (emoji), cover (gradien & upload), favorite, duplicate,
-           move to, Trash + restore + hapus permanen, breadcrumb,
-           full width, small text
-BELUM      cover reposition, font family, lock page, hitung kata,
-           riwayat versi, panel backlink, page template,
-           icon dari upload
+ADA        page icon (emoji), cover (gradien & upload), cover reposition,
+           favorite, duplicate, move to, Trash + restore + hapus permanen,
+           breadcrumb, full width, small text, font family, lock page,
+           hitung kata, panel backlink
+BELUM      riwayat versi, page template, icon dari upload
 DILUAR     share, publish ke web, guest, komentar, analytics halaman   -- (§56.2)
 ```
 

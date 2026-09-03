@@ -286,7 +286,7 @@ blocks
 pages
 + database_id      uuid null -> databases(id)     -- §20D, TANPA on delete cascade
 + search_vector    tsvector generated stored      -- §25A
-+ settings         jsonb not null default '{}'    -- §35A: fullWidth, smallText, font, locked
++ settings         jsonb not null default '{}'    -- §35A: fullWidth, smallText, font, locked, coverPosition {y}
 
 databases
 + workspace_id     uuid not null
@@ -323,8 +323,13 @@ database_views
 
 10.14 page_links                -- §15A, backlink
       id, source_page_id, source_block_id, target_page_id, target_block_id
-      index (target_page_id)
+      index (source_page_id), index (target_page_id)
       dibangun ulang setiap kali blok sebuah halaman disimpan
+
+10.15 link_previews             -- §29A.1, cache pratinjau bookmark/embed
+      id, url (unique), title, description, image_url, favicon_url,
+      status ('ok' | 'error'), fetched_at, expires_at
+      cache-first di POST /link-preview; TTL 7 hari
 
 10.15 reminders                 -- §70
       id, source, page_id, database_row_id, property_id, block_id,

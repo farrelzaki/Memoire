@@ -13,6 +13,7 @@ function makePage(partial: Partial<Page> & { id: string }): Page {
     isFavorite: false,
     isArchived: false,
     position: 0,
+    settings: {},
     createdAt: '',
     updatedAt: '',
     ...partial,

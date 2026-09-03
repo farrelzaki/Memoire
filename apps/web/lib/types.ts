@@ -1,5 +1,14 @@
 export type PageType = 'document' | 'database' | 'whiteboard' | 'diagram';
 
+/** Not filtered/sorted, so it's one JSONB blob on the server (§57 Decision 3). */
+export interface PageSettings {
+  fullWidth?: boolean;
+  smallText?: boolean;
+  font?: 'default' | 'serif' | 'mono';
+  locked?: boolean;
+  coverPosition?: { y: number };
+}
+
 /**
  * Mirrors the backend `pages` row (§10.3). Dates arrive as ISO strings over
  * JSON. Shared types will move to `packages/types` once both apps import them.
@@ -15,6 +24,7 @@ export interface Page {
   isFavorite: boolean;
   isArchived: boolean;
   position: number;
+  settings: PageSettings;
   createdAt: string;
   updatedAt: string;
 }
@@ -40,6 +50,24 @@ export interface Block {
   properties: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Response shape of `GET /pages/:id/backlinks` (§15A.3). */
+export interface Backlink {
+  sourcePageId: string;
+  sourcePageTitle: string;
+  sourceBlockId: string;
+  snippet: string | null;
+}
+
+/** Response shape of `POST /link-preview` (§29A.1). */
+export interface LinkPreview {
+  url: string;
+  title: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  faviconUrl: string | null;
+  status: 'ok' | 'error';
 }
 
 /** Mirrors the backend `attachments` row (§10.9). */

@@ -12,9 +12,9 @@ import { Attachment, attachments } from '../db/schema';
 import { StorageService } from '../storage/storage.service';
 import { extractExtension, sanitizeFilename } from './filename.util';
 
-const MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_SIZE_BYTES = 200 * 1024 * 1024; // 200 MB — video is the largest upload kind (§12B.2)
 
-// §28 — allow images plus a few common document types for now.
+// §28 — images, documents, and video/audio/pdf for the media blocks (§12B.2).
 const ALLOWED_MIME_TYPES = new Set([
   'image/png',
   'image/jpeg',
@@ -24,6 +24,12 @@ const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
   'text/plain',
   'text/markdown',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'audio/mpeg',
+  'audio/wav',
+  'audio/ogg',
 ]);
 
 export interface UploadedFile {
@@ -45,7 +51,7 @@ export class AttachmentsService {
       throw new BadRequestException('No file provided');
     }
     if (file.size > MAX_SIZE_BYTES) {
-      throw new BadRequestException('File exceeds the 10 MB limit');
+      throw new BadRequestException('File exceeds the 200 MB limit');
     }
     if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
       throw new BadRequestException(`Unsupported file type: ${file.mimetype}`);

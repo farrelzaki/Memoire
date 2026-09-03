@@ -51,6 +51,9 @@ export const pages = pgTable(
     isFavorite: boolean('is_favorite').notNull().default(false),
     isArchived: boolean('is_archived').notNull().default(false),
     position: integer('position').notNull().default(0),
+    // fullWidth, smallText, font, locked, coverPosition — not filtered/sorted,
+    // so it lives in JSONB rather than dedicated columns (§57 Decision 3).
+    settings: jsonb('settings').$type<Record<string, unknown>>().notNull().default({}),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -239,6 +242,44 @@ export const pageCanvases = pgTable('page_canvases', {
     .defaultNow(),
 });
 
+// 10.14 page_links — backlinks, rebuilt for the source page inside the same
+// transaction as PUT /pages/:id/blocks (§15A.2). Never a trigger or job.
+export const pageLinks = pgTable(
+  'page_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sourcePageId: uuid('source_page_id')
+      .notNull()
+      .references(() => pages.id, { onDelete: 'cascade' }),
+    sourceBlockId: uuid('source_block_id').notNull(),
+    targetPageId: uuid('target_page_id')
+      .notNull()
+      .references(() => pages.id, { onDelete: 'cascade' }),
+    targetBlockId: uuid('target_block_id'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    sourceIdx: index('page_links_source_idx').on(table.sourcePageId),
+    targetIdx: index('page_links_target_idx').on(table.targetPageId),
+  }),
+);
+
+// link_previews — server-fetched bookmark metadata cache (§29A.1). Cached
+// here, not in object storage, because it needs TTL/query, not blob storage.
+export const linkPreviews = pgTable('link_previews', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  url: text('url').notNull().unique(),
+  title: text('title'),
+  description: text('description'),
+  imageUrl: text('image_url'),
+  faviconUrl: text('favicon_url'),
+  status: text('status').notNull(),
+  fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
 // Type exports
 export type PageType = 'document' | 'database' | 'whiteboard' | 'diagram';
 
@@ -261,3 +302,9 @@ export type DatabaseView = typeof databaseViews.$inferSelect;
 export type Attachment = typeof attachments.$inferSelect;
 export type Template = typeof templates.$inferSelect;
 export type PageCanvas = typeof pageCanvases.$inferSelect;
+
+export type PageLink = typeof pageLinks.$inferSelect;
+export type NewPageLink = typeof pageLinks.$inferInsert;
+
+export type LinkPreview = typeof linkPreviews.$inferSelect;
+export type NewLinkPreview = typeof linkPreviews.$inferInsert;

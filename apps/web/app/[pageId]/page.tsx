@@ -3,10 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { getContentType } from '@/features/content-types/registry';
+import { BacklinksPanel } from '@/features/shell/backlinks-panel';
 import { PageHeader } from '@/features/shell/page-header';
 import { Topbar } from '@/features/shell/topbar';
 import { api, type UpdatePageInput } from '@/lib/api';
-import { usePagePref } from '@/stores/page-prefs';
 
 /**
  * Page shell: topbar (breadcrumb + actions), header (cover/icon/title), then
@@ -18,7 +18,6 @@ export default function PageDetail() {
   const params = useParams<{ pageId: string }>();
   const pageId = params.pageId;
   const queryClient = useQueryClient();
-  const prefs = usePagePref(pageId);
 
   const { data: page, isLoading, isError } = useQuery({
     queryKey: ['page', pageId],
@@ -42,7 +41,7 @@ export default function PageDetail() {
   }
 
   const ContentRenderer = getContentType(page.type)?.renderer;
-  const fullWidth = prefs.fullWidth ?? false;
+  const fullWidth = page.settings.fullWidth ?? false;
   const contentWidth = fullWidth ? 'max-w-none px-16' : 'mx-auto max-w-3xl px-8';
 
   return (
@@ -55,7 +54,11 @@ export default function PageDetail() {
         onUpdate={(body) => updatePage.mutate(body)}
       />
 
-      <div className={`${contentWidth} pb-32 pt-4 ${prefs.smallText ? 'text-sm' : ''}`}>
+      <div className={contentWidth}>
+        <BacklinksPanel pageId={pageId} />
+      </div>
+
+      <div className={`${contentWidth} pb-32 pt-4 ${page.settings.smallText ? 'text-sm' : ''}`}>
         {ContentRenderer ? (
           <ContentRenderer pageId={pageId} />
         ) : (

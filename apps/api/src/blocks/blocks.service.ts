@@ -2,6 +2,7 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, notInArray, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB, DrizzleDB } from '../db/drizzle.provider';
 import { Block, blocks } from '../db/schema';
+import { PageLinksService } from '../page-links/page-links.service';
 import { PagesService } from '../pages/pages.service';
 import { collectDescendantBlockIds } from './block-tree.lib';
 import { BlockPayloadDto } from './blocks.schema';
@@ -11,6 +12,7 @@ export class BlocksService {
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDB,
     private readonly pagesService: PagesService,
+    private readonly pageLinksService: PageLinksService,
   ) {}
 
   async getByPage(pageId: string): Promise<Block[]> {
@@ -50,6 +52,7 @@ export class BlocksService {
 
       if (ids.length === 0) {
         await tx.delete(blocks).where(eq(blocks.pageId, pageId));
+        await this.pageLinksService.rebuildForPage(tx, pageId, nodes);
         return [];
       }
 
@@ -78,6 +81,8 @@ export class BlocksService {
         });
 
       await tx.delete(blocks).where(and(eq(blocks.pageId, pageId), notInArray(blocks.id, ids)));
+
+      await this.pageLinksService.rebuildForPage(tx, pageId, nodes);
 
       return tx
         .select()

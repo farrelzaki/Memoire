@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useClickOutside } from '@/hooks/use-click-outside';
 import { api, attachmentContentUrl, type UpdatePageInput } from '@/lib/api';
-import { COVER_PRESETS, coverStyle, defaultCover } from '@/lib/cover';
+import { COVER_PRESETS, coverStyle, defaultCover, isGradientCover } from '@/lib/cover';
 import type { Page } from '@/lib/types';
 import { EmojiPicker } from './emoji-picker';
 
@@ -27,6 +27,8 @@ export function PageHeader({
   const [title, setTitle] = useState(page.title);
   const [iconOpen, setIconOpen] = useState(false);
   const [coverOpen, setCoverOpen] = useState(false);
+  const [repositioning, setRepositioning] = useState(false);
+  const coverRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setTitle(page.title), [page.id, page.title]);
 
@@ -41,26 +43,60 @@ export function PageHeader({
 
   const contentWidth = fullWidth ? 'max-w-none px-16' : 'mx-auto max-w-3xl px-8';
 
+  const startReposition = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!repositioning) return;
+    e.preventDefault();
+    const move = (clientY: number) => {
+      const rect = coverRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const y = Math.round(((clientY - rect.top) / rect.height) * 100);
+      onUpdate({ settings: { ...page.settings, coverPosition: { y: Math.min(100, Math.max(0, y)) } } });
+    };
+    move(e.clientY);
+
+    const onMove = (moveEvent: PointerEvent) => move(moveEvent.clientY);
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   return (
     <header className="group/header">
       {page.coverUrl && (
-        <div className="relative h-52 w-full" style={coverStyle(page.coverUrl)}>
+        <div
+          ref={coverRef}
+          onPointerDown={startReposition}
+          className={`relative h-52 w-full ${repositioning ? 'cursor-ns-resize' : ''}`}
+          style={coverStyle(page.coverUrl, page.settings.coverPosition)}
+        >
           <div className="absolute bottom-3 right-4 flex gap-1 opacity-0 transition group-hover/header:opacity-100">
-            <div className="relative">
-              <HeaderChip onClick={() => setCoverOpen((v) => !v)}>Change cover</HeaderChip>
-              {coverOpen && (
-                <CoverPicker
-                  pageId={page.id}
-                  align="right"
-                  onPick={(coverUrl) => {
-                    onUpdate({ coverUrl });
-                    setCoverOpen(false);
-                  }}
-                  onClose={() => setCoverOpen(false)}
-                />
-              )}
-            </div>
-            <HeaderChip onClick={() => onUpdate({ coverUrl: null })}>Remove</HeaderChip>
+            {repositioning ? (
+              <HeaderChip onClick={() => setRepositioning(false)}>Done</HeaderChip>
+            ) : (
+              <>
+                {!isGradientCover(page.coverUrl) && (
+                  <HeaderChip onClick={() => setRepositioning(true)}>Reposition</HeaderChip>
+                )}
+                <div className="relative">
+                  <HeaderChip onClick={() => setCoverOpen((v) => !v)}>Change cover</HeaderChip>
+                  {coverOpen && (
+                    <CoverPicker
+                      pageId={page.id}
+                      align="right"
+                      onPick={(coverUrl) => {
+                        onUpdate({ coverUrl });
+                        setCoverOpen(false);
+                      }}
+                      onClose={() => setCoverOpen(false)}
+                    />
+                  )}
+                </div>
+                <HeaderChip onClick={() => onUpdate({ coverUrl: null })}>Remove</HeaderChip>
+              </>
+            )}
           </div>
         </div>
       )}

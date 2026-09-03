@@ -21,12 +21,21 @@ describe('coverStyle', () => {
     expect(coverStyle(gradient)).toEqual({ backgroundImage: gradient });
   });
 
-  it('wraps an image URL and sizes it to cover', () => {
+  it('wraps an image URL, sizes it to cover, and centers vertically by default', () => {
     expect(coverStyle('https://example.com/a.png')).toEqual({
       backgroundImage: 'url("https://example.com/a.png")',
       backgroundSize: 'cover',
-      backgroundPosition: 'center',
+      backgroundPosition: 'center 50%',
     });
+  });
+
+  it('uses the stored vertical offset when repositioned', () => {
+    expect(coverStyle('https://example.com/a.png', { y: 20 }).backgroundPosition).toBe('center 20%');
+  });
+
+  it('clamps an out-of-range offset', () => {
+    expect(coverStyle('https://example.com/a.png', { y: 150 }).backgroundPosition).toBe('center 100%');
+    expect(coverStyle('https://example.com/a.png', { y: -10 }).backgroundPosition).toBe('center 0%');
   });
 
   it('escapes quotes so a URL cannot break out of the CSS value', () => {

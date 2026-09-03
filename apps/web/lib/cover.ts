@@ -31,9 +31,15 @@ export function isGradientCover(coverUrl: string): boolean {
 /**
  * Inline style for the cover banner. Gradients are used verbatim; anything
  * else is treated as an image URL and wrapped in `url(...)`, with quotes
- * escaped so a URL can't break out of the CSS value.
+ * escaped so a URL can't break out of the CSS value. `coverPosition.y` (0-100)
+ * is the vertical focus point set by drag-to-reposition (§71.8); it lives in
+ * `pages.settings`, not on the cover URL itself, so re-uploading the image
+ * never has to carry the old offset along with it.
  */
-export function coverStyle(coverUrl: string): { backgroundImage: string; backgroundSize?: string; backgroundPosition?: string } {
+export function coverStyle(
+  coverUrl: string,
+  coverPosition?: { y: number },
+): { backgroundImage: string; backgroundSize?: string; backgroundPosition?: string } {
   if (isGradientCover(coverUrl)) {
     return { backgroundImage: coverUrl };
   }
@@ -41,7 +47,7 @@ export function coverStyle(coverUrl: string): { backgroundImage: string; backgro
   return {
     backgroundImage: `url("${safe}")`,
     backgroundSize: 'cover',
-    backgroundPosition: 'center',
+    backgroundPosition: `center ${coverPosition ? Math.min(100, Math.max(0, coverPosition.y)) : 50}%`,
   };
 }
 

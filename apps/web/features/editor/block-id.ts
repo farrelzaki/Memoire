@@ -27,6 +27,17 @@ const BLOCK_ID_TYPES = [
   'columns',
   'column',
   'equation',
+  'subPage',
+  'linkToPage',
+  'breadcrumb',
+  'tableOfContents',
+  'syncedBlock',
+  'fileBlock',
+  'video',
+  'audio',
+  'pdf',
+  'bookmark',
+  'embed',
 ];
 
 function newBlockId(): string {

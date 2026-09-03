@@ -1,5 +1,4 @@
 import type { AnyExtension } from '@tiptap/core';
-import Image from '@tiptap/extension-image';
 import Table from '@tiptap/extension-table';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
@@ -7,12 +6,22 @@ import TableRow from '@tiptap/extension-table-row';
 import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
 import StarterKit from '@tiptap/starter-kit';
+import { attachmentContentUrl } from '@/lib/api';
 import type { TiptapNode } from '@/lib/types';
 import { Callout } from './callout-node';
 import { Column, Columns } from './columns-node';
+import { Bookmark } from './bookmark-node';
+import { Breadcrumb } from './breadcrumb-node';
+import { Embed } from './embed-node';
 import { Equation } from './equation-node';
 import { CodeBlockShiki } from './code-block-node';
+import { ImageBlock } from './image-node';
+import { LinkToPage } from './link-to-page-node';
+import { AudioBlock, FileBlock, PdfBlock, VideoBlock } from './media-nodes';
 import { MermaidBlock } from './mermaid-node';
+import { SubPage } from './sub-page-node';
+import { SyncedBlock } from './synced-block-node';
+import { TableOfContents } from './table-of-contents-node';
 import { Toggle } from './toggle-node';
 
 /**
@@ -56,6 +65,17 @@ class BlockTypeRegistryClass {
 }
 
 export const BlockTypeRegistry = new BlockTypeRegistryClass();
+
+/** Sum of `toPlainText` word counts across a page's top-level blocks (§71.8 "hitung kata"). Purely derived — never stored. */
+export function countWords(blocks: Array<{ type: string; content: TiptapNode | null }>): number {
+  let total = 0;
+  for (const block of blocks) {
+    const text = block.content ? BlockTypeRegistry.get(block.type)?.toPlainText(block.content) : '';
+    if (!text) continue;
+    total += text.trim().split(/\s+/).filter(Boolean).length;
+  }
+  return total;
+}
 
 // ---------------------------------------------------------------------------
 // Shared inline (text-run) serialization — every block type below composes
@@ -377,19 +397,37 @@ BlockTypeRegistry.register({
   icon: '🖼',
   group: 'media',
   keywords: ['image', 'photo', 'picture', 'upload'],
-  tiptapExtension: Image,
+  tiptapExtension: ImageBlock,
   slashCommand: { title: 'Image', description: 'Upload or embed with a link' },
   toHtml: (node) => {
     const src = typeof node.attrs?.src === 'string' ? node.attrs.src : '';
     const alt = typeof node.attrs?.alt === 'string' ? node.attrs.alt : '';
-    return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}">`;
+    const width = typeof node.attrs?.width === 'number' ? node.attrs.width : undefined;
+    const align = typeof node.attrs?.align === 'string' ? node.attrs.align : 'center';
+    const fullBleed = node.attrs?.fullBleed === true;
+    const caption = typeof node.attrs?.caption === 'string' ? node.attrs.caption : '';
+
+    let style = '';
+    if (fullBleed) {
+      style = 'width:100%';
+    } else if (width || align !== 'center') {
+      style = `display:block;margin-left:${align === 'right' ? 'auto' : '0'};margin-right:${align === 'left' ? 'auto' : '0'}${width ? `;width:${width}px` : ''}`;
+    }
+
+    const img = `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}"${style ? ` style="${style}"` : ''}>`;
+    return caption ? `<figure>${img}<figcaption>${escapeHtml(caption)}</figcaption></figure>` : img;
   },
   toMarkdown: (node) => {
     const src = typeof node.attrs?.src === 'string' ? node.attrs.src : '';
     const alt = typeof node.attrs?.alt === 'string' ? node.attrs.alt : '';
-    return `![${alt}](${src})`;
+    const caption = typeof node.attrs?.caption === 'string' ? node.attrs.caption : '';
+    const image = `![${alt}](${src})`;
+    return caption ? `${image}\n*${caption}*` : image;
   },
-  toPlainText: (node) => (typeof node.attrs?.alt === 'string' ? node.attrs.alt : ''),
+  toPlainText: (node) => {
+    const caption = typeof node.attrs?.caption === 'string' ? node.attrs.caption : '';
+    return caption || (typeof node.attrs?.alt === 'string' ? node.attrs.alt : '');
+  },
 });
 
 BlockTypeRegistry.register({
@@ -542,6 +580,223 @@ BlockTypeRegistry.register({
   toHtml: (node) => `<div data-type="column">${(node.content ?? []).map(childToHtml).join('')}</div>`,
   toMarkdown: (node) => (node.content ?? []).map(childToMarkdown).join('\n'),
   toPlainText: (node) => (node.content ?? []).map(childToPlainText).join('\n'),
+});
+
+BlockTypeRegistry.register({
+  key: 'subPage',
+  label: 'Page',
+  icon: '📄',
+  group: 'advanced',
+  keywords: ['subpage', 'page', 'child page'],
+  tiptapExtension: SubPage,
+  slashCommand: { title: 'Page', description: 'Create a child page inline' },
+  toHtml: (node) => {
+    const pageId = typeof node.attrs?.pageId === 'string' ? node.attrs.pageId : '';
+    return pageId ? `<a href="/${pageId}" data-type="sub-page">📄 Page</a>` : '';
+  },
+  toMarkdown: (node) => {
+    const pageId = typeof node.attrs?.pageId === 'string' ? node.attrs.pageId : '';
+    return pageId ? `[📄 Page](/${pageId})` : '';
+  },
+  toPlainText: () => '',
+});
+
+BlockTypeRegistry.register({
+  key: 'linkToPage',
+  label: 'Link to page',
+  icon: '🔗',
+  group: 'advanced',
+  keywords: ['link', 'page', 'reference'],
+  tiptapExtension: LinkToPage,
+  slashCommand: { title: 'Link to page', description: 'Link to an existing page' },
+  toHtml: (node) => {
+    const pageId = typeof node.attrs?.pageId === 'string' ? node.attrs.pageId : '';
+    return pageId ? `<a href="/${pageId}" data-type="link-to-page">🔗 Page</a>` : '';
+  },
+  toMarkdown: (node) => {
+    const pageId = typeof node.attrs?.pageId === 'string' ? node.attrs.pageId : '';
+    return pageId ? `[🔗 Page](/${pageId})` : '';
+  },
+  toPlainText: () => '',
+});
+
+BlockTypeRegistry.register({
+  key: 'breadcrumb',
+  label: 'Breadcrumb',
+  icon: '🧭',
+  group: 'advanced',
+  keywords: ['breadcrumb', 'trail', 'navigation'],
+  tiptapExtension: Breadcrumb,
+  slashCommand: { title: 'Breadcrumb', description: "This page's ancestor trail" },
+  toHtml: () => '<nav data-type="breadcrumb"></nav>',
+  toMarkdown: () => '',
+  toPlainText: () => '',
+});
+
+BlockTypeRegistry.register({
+  key: 'tableOfContents',
+  label: 'Table of contents',
+  icon: '📑',
+  group: 'advanced',
+  keywords: ['toc', 'table of contents', 'outline'],
+  tiptapExtension: TableOfContents,
+  slashCommand: { title: 'Table of contents', description: 'Outline of headings on this page' },
+  toHtml: () => '<nav data-type="table-of-contents"></nav>',
+  toMarkdown: () => '',
+  toPlainText: () => '',
+});
+
+BlockTypeRegistry.register({
+  key: 'syncedBlock',
+  label: 'Synced block',
+  icon: '🔁',
+  group: 'advanced',
+  keywords: ['synced', 'sync', 'reuse', 'duplicate'],
+  tiptapExtension: SyncedBlock,
+  slashCommand: { title: 'Synced block', description: 'Content reused and kept in sync elsewhere' },
+  toHtml: (node) => {
+    if (node.attrs?.sourceBlockId) return '<div data-type="synced-block">Synced content</div>';
+    return `<div data-type="synced-block">${(node.content ?? []).map(childToHtml).join('')}</div>`;
+  },
+  toMarkdown: (node) => {
+    if (node.attrs?.sourceBlockId) return '';
+    return (node.content ?? []).map(childToMarkdown).join('\n');
+  },
+  toPlainText: (node) => {
+    if (node.attrs?.sourceBlockId) return '';
+    return (node.content ?? []).map(childToPlainText).join('\n');
+  },
+});
+
+function mediaSrc(node: TiptapNode): string {
+  const attachmentId = typeof node.attrs?.attachmentId === 'string' ? node.attrs.attachmentId : null;
+  if (attachmentId) return attachmentContentUrl(attachmentId);
+  return typeof node.attrs?.url === 'string' ? node.attrs.url : '';
+}
+
+function mediaFilename(node: TiptapNode): string {
+  return typeof node.attrs?.filename === 'string' ? node.attrs.filename : '';
+}
+
+BlockTypeRegistry.register({
+  key: 'fileBlock',
+  label: 'File',
+  icon: '📎',
+  group: 'media',
+  keywords: ['file', 'attachment', 'download'],
+  tiptapExtension: FileBlock,
+  slashCommand: { title: 'File', description: 'Upload or embed a file' },
+  toHtml: (node) => {
+    const src = mediaSrc(node);
+    const filename = mediaFilename(node);
+    return src ? `<a href="${escapeHtml(src)}">${escapeHtml(filename || 'Download file')}</a>` : '';
+  },
+  toMarkdown: (node) => {
+    const src = mediaSrc(node);
+    return src ? `[${mediaFilename(node) || 'Download file'}](${src})` : '';
+  },
+  toPlainText: (node) => mediaFilename(node),
+});
+
+BlockTypeRegistry.register({
+  key: 'video',
+  label: 'Video',
+  icon: '🎬',
+  group: 'media',
+  keywords: ['video', 'movie', 'clip'],
+  tiptapExtension: VideoBlock,
+  slashCommand: { title: 'Video', description: 'Upload or embed a video' },
+  toHtml: (node) => {
+    const src = mediaSrc(node);
+    return src ? `<video src="${escapeHtml(src)}" controls></video>` : '';
+  },
+  toMarkdown: (node) => {
+    const src = mediaSrc(node);
+    return src ? `[${mediaFilename(node) || 'Video'}](${src})` : '';
+  },
+  toPlainText: (node) => mediaFilename(node),
+});
+
+BlockTypeRegistry.register({
+  key: 'audio',
+  label: 'Audio',
+  icon: '🎵',
+  group: 'media',
+  keywords: ['audio', 'music', 'sound'],
+  tiptapExtension: AudioBlock,
+  slashCommand: { title: 'Audio', description: 'Upload or embed an audio clip' },
+  toHtml: (node) => {
+    const src = mediaSrc(node);
+    return src ? `<audio src="${escapeHtml(src)}" controls></audio>` : '';
+  },
+  toMarkdown: (node) => {
+    const src = mediaSrc(node);
+    return src ? `[${mediaFilename(node) || 'Audio'}](${src})` : '';
+  },
+  toPlainText: (node) => mediaFilename(node),
+});
+
+BlockTypeRegistry.register({
+  key: 'pdf',
+  label: 'PDF',
+  icon: '📕',
+  group: 'media',
+  keywords: ['pdf', 'document'],
+  tiptapExtension: PdfBlock,
+  slashCommand: { title: 'PDF', description: 'Upload or embed a PDF' },
+  toHtml: (node) => {
+    const src = mediaSrc(node);
+    return src ? `<iframe src="${escapeHtml(src)}"></iframe>` : '';
+  },
+  toMarkdown: (node) => {
+    const src = mediaSrc(node);
+    return src ? `[${mediaFilename(node) || 'PDF'}](${src})` : '';
+  },
+  toPlainText: (node) => mediaFilename(node),
+});
+
+BlockTypeRegistry.register({
+  key: 'bookmark',
+  label: 'Bookmark',
+  icon: '🔖',
+  group: 'media',
+  keywords: ['bookmark', 'link', 'preview'],
+  tiptapExtension: Bookmark,
+  slashCommand: { title: 'Bookmark', description: 'Visual preview of a link' },
+  toHtml: (node) => {
+    const url = typeof node.attrs?.url === 'string' ? node.attrs.url : '';
+    if (!url) return '';
+    const title = typeof node.attrs?.title === 'string' ? node.attrs.title : url;
+    return `<a href="${escapeHtml(url)}" data-type="bookmark">${escapeHtml(title)}</a>`;
+  },
+  toMarkdown: (node) => {
+    const url = typeof node.attrs?.url === 'string' ? node.attrs.url : '';
+    if (!url) return '';
+    const title = typeof node.attrs?.title === 'string' ? node.attrs.title : url;
+    return `[${title}](${url})`;
+  },
+  toPlainText: (node) => (typeof node.attrs?.title === 'string' ? node.attrs.title : (node.attrs?.url as string) ?? ''),
+});
+
+BlockTypeRegistry.register({
+  key: 'embed',
+  label: 'Embed',
+  icon: '🖥',
+  group: 'media',
+  keywords: ['embed', 'iframe'],
+  tiptapExtension: Embed,
+  slashCommand: { title: 'Embed', description: 'Embed a website' },
+  toHtml: (node) => {
+    const url = typeof node.attrs?.url === 'string' ? node.attrs.url : '';
+    return url
+      ? `<iframe src="${escapeHtml(url)}" sandbox="allow-scripts allow-same-origin allow-popups" referrerpolicy="no-referrer" loading="lazy"></iframe>`
+      : '';
+  },
+  toMarkdown: (node) => {
+    const url = typeof node.attrs?.url === 'string' ? node.attrs.url : '';
+    return url ? `[Embed](${url})` : '';
+  },
+  toPlainText: () => '',
 });
 
 BlockTypeRegistry.register({
