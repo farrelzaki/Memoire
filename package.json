@@ -12,6 +12,7 @@
     "typecheck": "pnpm -r --filter !@memoire/desktop run typecheck",
     "test": "pnpm -r --filter !@memoire/desktop run test",
     "test:watch": "pnpm -r --filter !@memoire/desktop run test:watch",
+    "test:e2e": "pnpm --filter @memoire/web run test:e2e",
     "db:migrate": "pnpm --filter @memoire/api run db:migrate",
     "db:generate": "pnpm --filter @memoire/api run db:generate",
     "db:studio": "pnpm --filter @memoire/api run db:studio",

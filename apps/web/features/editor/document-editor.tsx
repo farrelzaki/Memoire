@@ -5,14 +5,17 @@ import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
 import TaskItem from '@tiptap/extension-task-item';
 import TaskList from '@tiptap/extension-task-list';
-import { EditorContent, useEditor, type Editor } from '@tiptap/react';
+import { BubbleMenu, EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import type { EditorView } from '@tiptap/pm/view';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { api, attachmentContentUrl } from '@/lib/api';
 import { blocksToDoc, docToBlocks, type TiptapDocument } from '@/lib/blocks';
-import type { Block } from '@/lib/types';
+import type { Block, TiptapNode } from '@/lib/types';
+import { toast } from '@/stores/toast';
 import { BlockId } from './block-id';
+import { BlockTypeRegistry } from './block-type-registry';
 import { MermaidBlock } from './mermaid-node';
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -56,6 +59,37 @@ function getBlockHandle(editor: Editor): BlockHandleState | null {
   }
 }
 
+/** Top-level block boundary (position + line top) nearest a viewport point — used to
+ * find both the block a drag is hovering over and where to insert on drop. */
+function blockPosAtCoords(view: EditorView, x: number, y: number): { pos: number; top: number } | null {
+  const found = view.posAtCoords({ left: x, top: y });
+  if (!found) return null;
+  const $pos = view.state.doc.resolve(found.pos);
+  const pos = $pos.depth >= 1 ? $pos.before(1) : found.pos;
+  try {
+    const coords = view.coordsAtPos(pos);
+    return { pos, top: coords.top };
+  } catch {
+    return null;
+  }
+}
+
+/** Moves the top-level block at `sourcePos` so it sits right before `targetPos`.
+ * Native ProseMirror move (delete + reinsert, positions remapped through the
+ * transaction) — never dnd-kit, which can't be mounted inside the ProseMirror
+ * content DOM (§CLAUDE.md, ADR-11). */
+function moveBlock(view: EditorView, sourcePos: number, targetPos: number): void {
+  const node = view.state.doc.nodeAt(sourcePos);
+  if (!node) return;
+  if (targetPos >= sourcePos && targetPos <= sourcePos + node.nodeSize) return; // dropped on itself
+
+  const tr = view.state.tr;
+  tr.delete(sourcePos, sourcePos + node.nodeSize);
+  const mappedTarget = tr.mapping.map(targetPos);
+  tr.insert(mappedTarget, node);
+  view.dispatch(tr);
+}
+
 function DocumentEditor({ pageId }: { pageId: string }) {
   const { data: blocks, isLoading } = useQuery({
     queryKey: ['blocks', pageId],
@@ -79,8 +113,12 @@ function EditorInstance({
   const [slash, setSlash] = useState<SlashState | null>(null);
   const [blockHandle, setBlockHandle] = useState<BlockHandleState | null>(null);
   const [blockMenuOpen, setBlockMenuOpen] = useState(false);
+  const [dropIndicatorTop, setDropIndicatorTop] = useState<number | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Mutable (not state) — read from editorProps closures captured at mount, which
+  // would otherwise see a stale `blockHandle` from the render that created them.
+  const dragSourcePosRef = useRef<number | null>(null);
 
   const uploadImage = useCallback(
     async (file: File): Promise<string> => {
@@ -110,7 +148,31 @@ function EditorInstance({
     ],
     content: blocksToDoc(initialBlocks) as unknown as Content,
     editorProps: {
+      handleDOMEvents: {
+        dragover: (view, event) => {
+          if (dragSourcePosRef.current === null) return false;
+          event.preventDefault();
+          const target = blockPosAtCoords(view, event.clientX, event.clientY);
+          setDropIndicatorTop(target?.top ?? null);
+          return true;
+        },
+        dragleave: () => {
+          if (dragSourcePosRef.current === null) return false;
+          setDropIndicatorTop(null);
+          return false;
+        },
+      },
       handleDrop(view, event) {
+        if (dragSourcePosRef.current !== null) {
+          event.preventDefault();
+          const sourcePos = dragSourcePosRef.current;
+          const target = blockPosAtCoords(view, event.clientX, event.clientY);
+          if (target) moveBlock(view, sourcePos, target.pos);
+          dragSourcePosRef.current = null;
+          setDropIndicatorTop(null);
+          return true;
+        }
+
         const file = Array.from(event.dataTransfer?.files ?? []).find((f) =>
           f.type.startsWith('image/'),
         );
@@ -239,6 +301,32 @@ function EditorInstance({
     setBlockMenuOpen(false);
   }, [editor, blockHandle]);
 
+  const copyBlockLink = useCallback(() => {
+    if (!editor || !blockHandle) return;
+    const node = editor.state.doc.nodeAt(blockHandle.pos);
+    const blockId = node?.attrs.blockId;
+    if (typeof blockId === 'string' && blockId) {
+      void navigator.clipboard.writeText(`${window.location.origin}/${pageId}#${blockId}`);
+      toast({ description: 'Link to block copied' });
+    }
+    setBlockMenuOpen(false);
+  }, [editor, blockHandle, pageId]);
+
+  const copyBlockMarkdown = useCallback(() => {
+    if (!editor || !blockHandle) return;
+    const node = editor.state.doc.nodeAt(blockHandle.pos);
+    if (node) {
+      const markdown = BlockTypeRegistry.get(node.type.name)?.toMarkdown(
+        node.toJSON() as TiptapNode,
+      );
+      if (markdown) {
+        void navigator.clipboard.writeText(markdown);
+        toast({ description: 'Block copied as Markdown' });
+      }
+    }
+    setBlockMenuOpen(false);
+  }, [editor, blockHandle]);
+
   const handleFilePick = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
@@ -264,6 +352,10 @@ function EditorInstance({
         onChange={handleFilePick}
       />
 
+      <BubbleMenu editor={editor} tippyOptions={{ duration: 100 }}>
+        <SelectionToolbar editor={editor} />
+      </BubbleMenu>
+
       <EditorContent editor={editor} />
 
       {slash && filteredItems.length > 0 && (
@@ -277,10 +369,76 @@ function EditorInstance({
           onToggle={() => setBlockMenuOpen((v) => !v)}
           onDelete={deleteBlock}
           onDuplicate={duplicateBlock}
+          onCopyLink={copyBlockLink}
+          onCopyMarkdown={copyBlockMarkdown}
           onTurnInto={selectItem}
           items={items}
+          onDragStart={() => {
+            dragSourcePosRef.current = blockHandle.pos;
+          }}
+          onDragEnd={() => {
+            dragSourcePosRef.current = null;
+            setDropIndicatorTop(null);
+          }}
         />
       )}
+
+      {dropIndicatorTop !== null && (
+        <div
+          className="pointer-events-none fixed z-40 h-0.5 rounded bg-blue-400"
+          style={{ top: dropIndicatorTop, left: editor.view.dom.getBoundingClientRect().left, width: editor.view.dom.getBoundingClientRect().width }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Selection toolbar (§15) — appears above a non-empty text selection via
+ * Tiptap's `BubbleMenu` (positioning handled entirely by the library).
+ */
+function SelectionToolbar({ editor }: { editor: Editor }) {
+  const buttonCls = (active: boolean) =>
+    `flex h-7 w-7 items-center justify-center rounded text-sm ${
+      active
+        ? 'bg-zinc-700 text-white dark:bg-zinc-200 dark:text-zinc-900'
+        : 'text-zinc-100 hover:bg-zinc-700 dark:text-zinc-800 dark:hover:bg-zinc-300'
+    }`;
+
+  return (
+    <div className="flex items-center gap-0.5 rounded-lg bg-zinc-900 p-1 shadow-lg dark:bg-zinc-100">
+      <button
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => editor.chain().focus().toggleBold().run()}
+        className={buttonCls(editor.isActive('bold'))}
+        title="Bold"
+      >
+        B
+      </button>
+      <button
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => editor.chain().focus().toggleItalic().run()}
+        className={`${buttonCls(editor.isActive('italic'))} italic`}
+        title="Italic"
+      >
+        i
+      </button>
+      <button
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => editor.chain().focus().toggleStrike().run()}
+        className={`${buttonCls(editor.isActive('strike'))} line-through`}
+        title="Strikethrough"
+      >
+        S
+      </button>
+      <button
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => editor.chain().focus().toggleCode().run()}
+        className={`${buttonCls(editor.isActive('code'))} font-mono`}
+        title="Code"
+      >
+        {'</>'}
+      </button>
     </div>
   );
 }
@@ -366,28 +524,45 @@ function BlockHandle({
   onToggle,
   onDelete,
   onDuplicate,
+  onCopyLink,
+  onCopyMarkdown,
   onTurnInto,
   items,
+  onDragStart,
+  onDragEnd,
 }: {
   handle: BlockHandleState;
   open: boolean;
   onToggle: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
+  onCopyLink: () => void;
+  onCopyMarkdown: () => void;
   onTurnInto: (run: () => void) => void;
   items: Array<{ title: string; hint: string; run: () => void }>;
+  onDragStart: () => void;
+  onDragEnd: () => void;
 }) {
   return (
     <>
       {/* `coordsAtPos` returns viewport coordinates, so the handle must be
           `fixed` — positioning it absolutely inside the editor made it drift
-          by whatever the page header above happened to be tall. */}
+          by whatever the page header above happened to be tall. Draggable: this
+          is a native HTML5 drag from an element outside the ProseMirror content
+          DOM, dropped back in via `editorProps.handleDrop` (§CLAUDE.md, ADR-11
+          — dnd-kit is never mounted inside ProseMirror content). */}
       <button
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = 'move';
+          onDragStart();
+        }}
+        onDragEnd={onDragEnd}
         onMouseDown={(e) => e.preventDefault()}
         onClick={onToggle}
-        className="fixed z-40 flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        className="fixed z-40 flex h-6 w-6 cursor-grab items-center justify-center rounded text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
         style={{ top: handle.top, left: handle.left - 32 }}
-        title="Block menu"
+        title="Block menu — drag to reorder"
       >
         ⋮⋮
       </button>
@@ -414,6 +589,20 @@ function BlockHandle({
             className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
           >
             Duplicate
+          </button>
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onCopyLink}
+            className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            Copy link to block
+          </button>
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onCopyMarkdown}
+            className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            Copy as Markdown
           </button>
           <button
             onMouseDown={(e) => e.preventDefault()}

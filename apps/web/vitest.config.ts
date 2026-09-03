@@ -10,5 +10,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['**/*.spec.ts', '**/*.test.ts'],
+    // e2e/**  Playwright specs (§40) — a different runner, not Vitest.
+    exclude: ['**/node_modules/**', 'e2e/**'],
   },
 });
