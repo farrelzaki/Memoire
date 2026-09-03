@@ -284,6 +284,7 @@ export function TableView({
   onSetCalculation,
   rowHeight = 'short',
   wrapCells = false,
+  onOpenRow,
 }: {
   properties: DatabaseProperty[];
   rows: DatabaseRow[];
@@ -300,6 +301,8 @@ export function TableView({
   onSetCalculation?: (propertyId: string, calculationId: CalculationId | null) => void;
   rowHeight?: 'short' | 'medium' | 'tall';
   wrapCells?: boolean;
+  /** Opens the row as a peek/full page per `config.openAs` (§20D.6). */
+  onOpenRow?: (row: DatabaseRow) => void;
 }) {
   const [addingColumn, setAddingColumn] = useState(false);
   const cellPadY = ROW_HEIGHT_CLASS[rowHeight] ?? ROW_HEIGHT_CLASS.short;
@@ -310,6 +313,7 @@ export function TableView({
         <table className="w-full border-collapse">
           <thead>
             <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
+              {onOpenRow && <th className="w-6" />}
               {properties.map((p) => (
                 <th key={p.id} className="border-r border-zinc-200 px-2 py-1.5 font-medium dark:border-zinc-800">
                   <button
@@ -326,7 +330,18 @@ export function TableView({
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800">
+              <tr key={row.id} className="group border-b border-zinc-100 last:border-0 dark:border-zinc-800">
+                {onOpenRow && (
+                  <td className="w-6 px-0.5 text-center">
+                    <button
+                      onClick={() => onOpenRow(row)}
+                      className="text-xs text-zinc-300 opacity-0 hover:text-zinc-600 group-hover:opacity-100 dark:hover:text-zinc-300"
+                      title="Open row"
+                    >
+                      ⤢
+                    </button>
+                  </td>
+                )}
                 {properties.map((p) => (
                   <td
                     key={p.id}
@@ -348,7 +363,7 @@ export function TableView({
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={properties.length + 1} className="px-3 py-6 text-center text-zinc-400 dark:text-zinc-500">
+                <td colSpan={properties.length + 1 + (onOpenRow ? 1 : 0)} className="px-3 py-6 text-center text-zinc-400 dark:text-zinc-500">
                   No rows yet.
                 </td>
               </tr>
@@ -357,6 +372,7 @@ export function TableView({
           {calculations && onSetCalculation && (
             <tfoot>
               <tr className="border-t border-zinc-200 bg-zinc-50 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900">
+                {onOpenRow && <td />}
                 {properties.map((p) => {
                   const available = PropertyTypeRegistry.get(p.type)?.calculations ?? [];
                   const current = selectedCalculations?.[p.id];
@@ -416,6 +432,7 @@ export function BoardView({
   groups,
   commitCell,
   createRow,
+  onOpenRow,
 }: {
   properties: DatabaseProperty[];
   rows: DatabaseRow[];
@@ -423,6 +440,7 @@ export function BoardView({
   groups?: DatabaseQueryGroup[] | null;
   commitCell: CommitCell;
   createRow: (values?: Record<string, unknown>) => void;
+  onOpenRow?: (row: DatabaseRow) => void;
 }) {
   const options = optionsOf(groupBy);
   const columns = [...options, null];
@@ -450,9 +468,12 @@ export function BoardView({
             <div className="flex flex-col gap-1.5 p-1.5">
               {colRows.map((row) => (
                 <div key={row.id} className="rounded border border-zinc-200 bg-white p-2 text-sm dark:border-zinc-700 dark:bg-zinc-800">
-                  <div className="font-medium text-zinc-800 dark:text-zinc-100">
+                  <button
+                    onClick={() => onOpenRow?.(row)}
+                    className="text-left font-medium text-zinc-800 hover:underline dark:text-zinc-100"
+                  >
                     {rowTitle(properties, row) || 'Untitled'}
-                  </div>
+                  </button>
                   <select
                     value={typeof row.values?.[groupBy.id] === 'string' ? (row.values[groupBy.id] as string) : ''}
                     onChange={(e) => commitCell(row, groupBy, e.target.value || null)}
@@ -569,22 +590,25 @@ export function GalleryView({
   properties,
   rows,
   createRow,
+  onOpenRow,
 }: {
   properties: DatabaseProperty[];
   rows: DatabaseRow[];
   createRow: () => void;
+  onOpenRow?: (row: DatabaseRow) => void;
 }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
       {rows.map((row) => (
-        <div
+        <button
           key={row.id}
-          className="min-h-20 rounded border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900"
+          onClick={() => onOpenRow?.(row)}
+          className="min-h-20 rounded border border-zinc-200 bg-zinc-50 p-3 text-left hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
         >
           <div className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
             {rowTitle(properties, row) || 'Untitled'}
           </div>
-        </div>
+        </button>
       ))}
       <button
         onClick={createRow}

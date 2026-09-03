@@ -10,6 +10,7 @@ function row(id: string, values: Record<string, unknown>): DatabaseRow {
     values,
     position: 0,
     uniqueIdSeq: null,
+    isArchived: false,
     createdAt: '',
     updatedAt: '',
   };

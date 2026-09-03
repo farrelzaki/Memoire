@@ -29,6 +29,7 @@ import { toast } from '@/stores/toast';
 import { BlockId } from './block-id';
 import { Bookmark } from './bookmark-node';
 import { Breadcrumb } from './breadcrumb-node';
+import { DatabaseBlock } from './database-block-node';
 import { Callout } from './callout-node';
 import { Column, Columns } from './columns-node';
 import { Embed } from './embed-node';
@@ -259,6 +260,7 @@ function EditorInstance({
       PdfBlock.configure({ pageId }),
       Bookmark,
       Embed,
+      DatabaseBlock.configure({ pageId }),
       BlockId,
     ],
     content: blocksToDoc(initialBlocks) as unknown as Content,
@@ -555,6 +557,25 @@ function EditorInstance({
         title: 'Embed',
         hint: 'Website',
         run: () => editor?.chain().focus().insertContent({ type: 'embed' }).run(),
+      },
+      {
+        title: 'Database — Inline',
+        hint: 'Table embedded here',
+        run: async () => {
+          const database = await api.createDatabase({ ownerPageId: pageId, isInline: true });
+          queryClient.invalidateQueries({ queryKey: ['databases'] });
+          editor
+            ?.chain()
+            .focus()
+            .insertContent({ type: 'databaseView', attrs: { databaseId: database.id, mode: 'inline' } })
+            .run();
+        },
+      },
+      {
+        title: 'Database — Linked view',
+        hint: 'View of an existing database',
+        run: () =>
+          editor?.chain().focus().insertContent({ type: 'databaseView', attrs: { mode: 'linked' } }).run(),
       },
     ],
     [editor, pickImage, pageId, queryClient],

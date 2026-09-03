@@ -1,6 +1,7 @@
 'use client';
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import type {
@@ -15,13 +16,24 @@ import type {
 import { applyFilter, applySort, mergeRowValues, normalizeViewConfig, type Filter, type Sort } from './database.lib';
 import { BoardView, CalendarView, GalleryView, TableView } from './database-views';
 import { PropertyTypeRegistry } from './property-type-registry';
+import { RowPeek } from './row-peek';
 
 type ViewType = 'table' | 'board' | 'calendar' | 'gallery';
 
-export function DatabaseEditor({ pageId }: { pageId: string }) {
+/**
+ * `pageId` drives the full-page database route (unchanged); `databaseId`
+ * lets an inline/linked-view editor block (§20C.3) address a database
+ * directly, without going through its owner page. Exactly one is passed by
+ * any given caller — everything downstream keys off `agg.database.id`
+ * either way, so this only changes how the aggregate is first fetched.
+ */
+export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?: string; databaseId?: string }) {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [addingView, setAddingView] = useState(false);
+  const [peekRow, setPeekRow] = useState<DatabaseRow | null>(null);
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
   // Unsaved edits, previewed via `overrides` (§22A.1) while the debounced
   // PATCH to `database_views.config` is in flight — never held as the
   // source of truth, just a preview layer over `activeView.config`.
@@ -30,13 +42,15 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
   const pendingConfigRef = useRef<Partial<ViewConfig>>({});
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const identityKey = pageId ?? databaseIdProp;
   const { data: agg, isLoading } = useQuery({
-    queryKey: ['database', pageId],
-    queryFn: () => api.getDatabase(pageId),
+    queryKey: ['database', identityKey],
+    queryFn: () => (pageId ? api.getDatabase(pageId) : api.getDatabaseById(databaseIdProp!)),
+    enabled: !!identityKey,
   });
 
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['database', pageId] });
+    queryClient.invalidateQueries({ queryKey: ['database', identityKey] });
     queryClient.invalidateQueries({ queryKey: ['database-query'] });
   };
 
@@ -47,8 +61,15 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
   });
 
   const createRow = useMutation({
-    mutationFn: (values?: Record<string, unknown>) => api.createRow(agg!.database.id, values),
+    mutationFn: ({ values, templateId }: { values?: Record<string, unknown>; templateId?: string } = {}) =>
+      api.createRow(agg!.database.id, values, undefined, templateId),
     onSuccess: invalidate,
+  });
+
+  const { data: templates = [] } = useQuery({
+    queryKey: ['templates', agg?.database.id],
+    queryFn: () => api.listTemplates(agg!.database.id),
+    enabled: !!agg,
   });
 
   const updateRow = useMutation({
@@ -78,12 +99,27 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
     onSuccess: invalidate,
   });
 
+  const duplicateView = useMutation({
+    mutationFn: (id: string) => api.duplicateView(id),
+    onSuccess: (copy) => {
+      invalidate();
+      setActiveViewId(copy.id);
+    },
+  });
+
+  // Pointer-drag tab reordering is Sprint 21 — this persists position via move-left/right (§21).
+  const moveView = useMutation({
+    mutationFn: ({ id, direction }: { id: string; direction: 'left' | 'right' }) => api.moveView(id, direction),
+    onSuccess: invalidate,
+  });
+
   const activeView = agg?.views.find((v) => v.id === activeViewId) ?? agg?.views[0];
 
   // Any unsaved edit for a previous view doesn't leak into the next one.
   useEffect(() => {
     setConfigOverride({});
     pendingConfigRef.current = {};
+    setViewMenuOpen(false);
   }, [activeView?.id]);
 
   const savedConfig = normalizeViewConfig(activeView?.config ?? null);
@@ -149,6 +185,7 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
     : serverRows;
 
   const commitCell = (row: DatabaseRow, property: DatabaseProperty, value: unknown) => {
+    if (config.locked) return; // Lock view (§21) — read-only cells.
     updateRow.mutate({ id: row.id, values: mergeRowValues(row, property.id, value) });
   };
 
@@ -185,6 +222,16 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
     setAddingView(false);
   };
 
+  // Side/center/full peek (§20D.6) — 'full' just navigates, no dialog state needed.
+  const openRow = (row: DatabaseRow) => {
+    const openAs = (config.openAs as 'side' | 'center' | 'full') ?? 'side';
+    if (openAs === 'full') {
+      if (row.pageId) router.push(`/${row.pageId}`);
+      return;
+    }
+    setPeekRow(row);
+  };
+
   let content: React.ReactNode;
   if (activeView.type === 'table') {
     content = (
@@ -195,7 +242,7 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
         toggleSort={toggleSort}
         commitCell={commitCell}
         deleteRow={(id) => deleteRow.mutate(id)}
-        createRow={() => createRow.mutate()}
+        createRow={() => createRow.mutate({})}
         createProperty={(input) => createProperty.mutate(input)}
         calculations={calculations}
         selectedCalculations={config.calculations as Record<string, CalculationId>}
@@ -208,6 +255,7 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
         }
         rowHeight={(config.rowHeight as 'short' | 'medium' | 'tall') ?? 'short'}
         wrapCells={Boolean(config.wrapCells)}
+        onOpenRow={openRow}
       />
     );
   } else if (activeView.type === 'board') {
@@ -220,7 +268,8 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
         groupBy={groupBy}
         groups={groups}
         commitCell={commitCell}
-        createRow={(values) => createRow.mutate(values)}
+        createRow={(values) => createRow.mutate({ values })}
+        onOpenRow={openRow}
       />
     ) : (
       <p className="text-zinc-400 dark:text-zinc-500">Add a “select” or “status” property to use the board view.</p>
@@ -234,15 +283,44 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
       <p className="text-zinc-400 dark:text-zinc-500">Add a “date” property to use the calendar view.</p>
     );
   } else {
-    content = <GalleryView properties={visibleProperties} rows={rows} createRow={() => createRow.mutate()} />;
+    content = (
+      <GalleryView
+        properties={visibleProperties}
+        rows={rows}
+        createRow={() => createRow.mutate({})}
+        onOpenRow={openRow}
+      />
+    );
   }
 
   return (
     <div className="mt-6 text-sm">
-      <FilterBar properties={properties} filter={config.filter} onChange={(filter) => updateConfig({ filter })} />
-      <SortBar properties={properties} sorts={config.sorts} onChange={(sorts) => updateConfig({ sorts })} />
+      {config.locked && (
+        <p className="mb-2 text-xs text-zinc-400">🔒 This view is locked — filter, sort, and columns can't be edited here.</p>
+      )}
+      {!config.locked && (
+        <>
+          <FilterBar properties={properties} filter={config.filter} onChange={(filter) => updateConfig({ filter })} />
+          <SortBar properties={properties} sorts={config.sorts} onChange={(sorts) => updateConfig({ sorts })} />
+        </>
+      )}
 
-      {activeView.type === 'table' && (
+      {!config.locked && templates.length > 0 && (
+        <div className="mb-2 flex items-center gap-1 text-xs text-zinc-500">
+          <span>New from template:</span>
+          {templates.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => createRow.mutate({ templateId: t.id })}
+              className="rounded border border-zinc-200 px-1.5 py-0.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            >
+              {t.icon ?? '📄'} {t.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!config.locked && activeView.type === 'table' && (
         <div className="mb-2 flex items-center gap-3 text-xs text-zinc-500">
           <ColumnVisibilityMenu
             properties={properties}
@@ -279,7 +357,7 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
       {/* View switcher */}
       <div className="mb-2 flex items-center gap-1 border-b border-zinc-200 dark:border-zinc-800">
         {agg.views.map((view) => (
-          <div key={view.id} className="group flex items-center">
+          <div key={view.id} className="group relative flex items-center">
             <button
               onClick={() => setActiveViewId(view.id)}
               className={`px-2 py-1.5 text-sm ${
@@ -289,15 +367,61 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
               }`}
             >
               {view.name}
+              {(normalizeViewConfig(view.config) as ViewConfig).locked ? ' 🔒' : ''}
             </button>
-            {agg.views.length > 1 && view.id === activeView.id && (
+            {view.id === activeView.id && (
               <button
-                onClick={() => deleteView.mutate(view.id)}
-                className="px-1 text-xs text-zinc-300 opacity-0 hover:text-red-500 group-hover:opacity-100"
-                title="Delete view"
+                onClick={() => setViewMenuOpen((v) => !v)}
+                className="px-1 text-xs text-zinc-300 opacity-0 hover:text-zinc-600 group-hover:opacity-100 dark:hover:text-zinc-300"
+                title="View options"
               >
-                ×
+                ⋯
               </button>
+            )}
+            {view.id === activeView.id && viewMenuOpen && (
+              <div className="absolute left-0 top-8 z-50 w-40 rounded border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                <button
+                  onClick={() => {
+                    duplicateView.mutate(view.id);
+                    setViewMenuOpen(false);
+                  }}
+                  className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  Duplicate
+                </button>
+                <button
+                  onClick={() => moveView.mutate({ id: view.id, direction: 'left' })}
+                  className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  Move left
+                </button>
+                <button
+                  onClick={() => moveView.mutate({ id: view.id, direction: 'right' })}
+                  className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  Move right
+                </button>
+                <button
+                  onClick={() => {
+                    updateConfig({ locked: !config.locked });
+                    setViewMenuOpen(false);
+                  }}
+                  className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  {config.locked ? 'Unlock view' : 'Lock view'}
+                </button>
+                {agg.views.length > 1 && (
+                  <button
+                    onClick={() => {
+                      deleteView.mutate(view.id);
+                      setViewMenuOpen(false);
+                    }}
+                    className="block w-full rounded px-2 py-1 text-left text-sm text-red-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
             )}
           </div>
         ))}
@@ -334,6 +458,15 @@ export function DatabaseEditor({ pageId }: { pageId: string }) {
         >
           {queryResult.isFetchingNextPage ? 'Loading…' : `Load more (${rows.length} of ${total})`}
         </button>
+      )}
+
+      {peekRow && (
+        <RowPeek
+          row={peekRow}
+          properties={properties}
+          mode={(config.openAs as 'side' | 'center') ?? 'side'}
+          onClose={() => setPeekRow(null)}
+        />
       )}
     </div>
   );

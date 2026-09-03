@@ -8,6 +8,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -54,6 +55,11 @@ export const pages = pgTable(
     // fullWidth, smallText, font, locked, coverPosition — not filtered/sorted,
     // so it lives in JSONB rather than dedicated columns (§57 Decision 3).
     settings: jsonb('settings').$type<Record<string, unknown>>().notNull().default({}),
+    // Set only for a row page (§20D.1) — the row's detail page, rendered as a
+    // plain document plus a properties panel, never a new content type
+    // (ADR-08). No `on delete cascade`: deleting a database soft-deletes its
+    // row pages through the service layer instead (§20D.5, §10B).
+    databaseId: uuid('database_id').references((): AnyPgColumn => databases.id),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -66,6 +72,7 @@ export const pages = pgTable(
     parentIdx: index('pages_parent_idx').on(table.parentPageId),
     updatedIdx: index('pages_updated_idx').on(table.updatedAt),
     favoriteIdx: index('pages_favorite_idx').on(table.isFavorite),
+    databaseIdx: index('pages_database_idx').on(table.databaseId),
   }),
 );
 
@@ -110,10 +117,17 @@ export const databases = pgTable(
   'databases',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    pageId: uuid('page_id')
+    workspaceId: uuid('workspace_id')
       .notNull()
-      .references(() => pages.id, { onDelete: 'cascade' })
-      .unique(),
+      .references(() => workspaces.id),
+    // The page this database physically lives on — always set, whether the
+    // database is a full page (`isInline = false`) or embedded inside one
+    // (`isInline = true`, §20C.2). Cascades: a database dies with its owner
+    // page's permanent delete.
+    ownerPageId: uuid('owner_page_id')
+      .notNull()
+      .references(() => pages.id, { onDelete: 'cascade' }),
+    isInline: boolean('is_inline').notNull().default(false),
     name: text('name').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
@@ -123,7 +137,12 @@ export const databases = pgTable(
       .defaultNow(),
   },
   (table) => ({
-    pageIdx: index('databases_page_idx').on(table.pageId),
+    ownerPageIdx: index('databases_owner_page_idx').on(table.ownerPageId),
+    // "One full-page database per page" stays a DB-enforced invariant; a
+    // document page may hold any number of inline databases (§20C.2).
+    fullPageUniq: uniqueIndex('databases_full_page_uniq')
+      .on(table.ownerPageId)
+      .where(sql`${table.isInline} = false`),
   }),
 );
 
@@ -160,6 +179,9 @@ export const databaseRows = pgTable(
     // once at creation from that property's config.nextValue counter, never
     // reassigned. Null for databases with no unique_id property.
     uniqueIdSeq: integer('unique_id_seq'),
+    // Mirrors the row's page's isArchived when it has one (§20D.5, one
+    // transaction both ways) — a soft-deleted row never appears in a query.
+    isArchived: boolean('is_archived').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -220,19 +242,29 @@ export const attachments = pgTable(
 );
 
 // 10.10 templates
-export const templates = pgTable('templates', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: text('name').notNull(),
-  icon: text('icon'),
-  description: text('description'),
-  content: jsonb('content').$type<unknown>(),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const templates = pgTable(
+  'templates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    // Row templates (§20D) are scoped to one database; page templates (not
+    // yet built) would leave this null — the same table, distinguished by
+    // which FK is set, rather than two near-identical tables.
+    databaseId: uuid('database_id').references(() => databases.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    icon: text('icon'),
+    description: text('description'),
+    content: jsonb('content').$type<unknown>(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    databaseIdx: index('templates_database_idx').on(table.databaseId),
+  }),
+);
 
 // 10.11 page_canvases — whiteboard & diagram content (schema-less by design).
 export const pageCanvases = pgTable('page_canvases', {

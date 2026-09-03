@@ -135,6 +135,9 @@ export const updatePropertySchema = z.object({
 export const createRowSchema = z.object({
   id: uuid.optional(),
   values: z.record(z.unknown()).optional(),
+  // Seeds `values` from a saved row template (§20D) — the request can still
+  // pass `values` alongside it, which override the template's on a per-key basis.
+  templateId: uuid.optional(),
 });
 
 export const updateRowSchema = z.object({
@@ -155,9 +158,28 @@ export const updateViewSchema = z.object({
   config: z.record(z.unknown()).optional(),
 });
 
+export const moveViewSchema = z.object({
+  direction: z.enum(['left', 'right']),
+});
+
+/**
+ * `POST /databases` (§20C) — creates a database directly rather than as a
+ * page's default content. `isInline: true` for a block embedded in a
+ * document; `false` for a full-page database (still created this way when a
+ * page of `type: 'database'` is made — see `PagesService.create`).
+ */
+export const createDatabaseSchema = z.object({
+  id: uuid.optional(),
+  ownerPageId: uuid,
+  name: z.string().trim().min(1).max(100).default('Untitled'),
+  isInline: z.boolean().default(false),
+});
+
 export type CreatePropertyDto = z.infer<typeof createPropertySchema>;
 export type UpdatePropertyDto = z.infer<typeof updatePropertySchema>;
 export type CreateRowDto = z.infer<typeof createRowSchema>;
 export type UpdateRowDto = z.infer<typeof updateRowSchema>;
 export type CreateViewDto = z.infer<typeof createViewSchema>;
 export type UpdateViewDto = z.infer<typeof updateViewSchema>;
+export type MoveViewDto = z.infer<typeof moveViewSchema>;
+export type CreateDatabaseDto = z.infer<typeof createDatabaseSchema>;

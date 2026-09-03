@@ -26,9 +26,10 @@ ADA        paragraph, heading 1-3, bulleted list, numbered list, to-do,
            columns 2-5, table sederhana, equation block, inline equation,
            sub-page, link-to-page, breadcrumb-block, table of contents,
            synced block, video / audio / file / PDF (upload atau URL),
-           bookmark (pratinjau URL), embed ber-sandbox
+           bookmark (pratinjau URL), embed ber-sandbox,
+           database inline, linked database view
 SEBAGIAN   code block   -- tanpa syntax highlight, pemilih bahasa, tombol salin
-BELUM      template button, database inline, linked database view
+BELUM      template button
 DITUNDA    button multi-aksi   -- template button menutup sebagian besar kebutuhannya
            blok AI             -- bersama integrasi pihak ketiga lain (§56.3)
 DILUAR     komentar per blok   -- melibatkan pengguna lain (§56.2)
@@ -101,12 +102,14 @@ ADA        20 fungsi: count all / values / unique / empty / not empty,
 ```text
 ADA        database sebagai halaman penuh, beberapa view per database,
            duplicate database (ikut lewat duplicate halaman)
-BELUM      database inline di dalam dokumen   -- terhalang unique constraint (§20C)
-           linked view atas database lain
-           baris sebagai halaman (properti + konten)  -- kolom page_id ada, tak pernah diisi
-           side peek / center peek
-           template baris
-           konversi tabel sederhana <-> database
+           database inline di dalam dokumen (blok, §20C)
+           linked view atas database lain (blok, §20C.3)
+           baris sebagai halaman (properti + konten, §20D) -- panel properti di atas dokumen baris
+           side peek / center peek (properti + tautan ke halaman penuh; belum menyematkan konten blok)
+           template baris (buat dari baris, pilih saat baris baru)
+           duplicate view, geser urutan tab (tombol; drag-and-drop di Sprint 21), lock view
+BELUM      konversi tabel sederhana <-> database
+           page template (template halaman biasa, beda dari template baris)
 DITUNDA    sinkronisasi database dari sumber eksternal   -- butuh integrasi akun (§56.3)
 ```
 

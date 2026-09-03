@@ -38,6 +38,7 @@ const BLOCK_ID_TYPES = [
   'pdf',
   'bookmark',
   'embed',
+  'databaseView',
 ];
 
 function newBlockId(): string {

@@ -11,6 +11,7 @@ import type { TiptapNode } from '@/lib/types';
 import { Callout } from './callout-node';
 import { Column, Columns } from './columns-node';
 import { Bookmark } from './bookmark-node';
+import { DatabaseBlock } from './database-block-node';
 import { Breadcrumb } from './breadcrumb-node';
 import { Embed } from './embed-node';
 import { Equation } from './equation-node';
@@ -796,6 +797,25 @@ BlockTypeRegistry.register({
     const url = typeof node.attrs?.url === 'string' ? node.attrs.url : '';
     return url ? `[Embed](${url})` : '';
   },
+  toPlainText: () => '',
+});
+
+BlockTypeRegistry.register({
+  key: 'databaseView',
+  label: 'Database',
+  icon: '▤',
+  group: 'database',
+  keywords: ['database', 'table', 'inline', 'linked view'],
+  tiptapExtension: DatabaseBlock,
+  slashCommand: { title: 'Database', description: 'Inline table, or a view of an existing database' },
+  // The live table can't be resolved synchronously in a serializer (same
+  // limitation as a syncedBlock copy, block-type-registry.ts) — export just
+  // notes what's here.
+  toHtml: (node) => {
+    const mode = typeof node.attrs?.mode === 'string' ? node.attrs.mode : 'inline';
+    return `<div data-type="database-view" data-mode="${escapeHtml(mode)}">Database</div>`;
+  },
+  toMarkdown: () => '',
   toPlainText: () => '',
 });
 

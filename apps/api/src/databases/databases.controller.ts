@@ -12,12 +12,16 @@ import { DatabaseQueryRequestDto, databaseQueryRequestSchema } from '@memoire/va
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { DatabaseQueryService } from './database-query.service';
 import {
+  CreateDatabaseDto,
+  createDatabaseSchema,
   CreatePropertyDto,
   createPropertySchema,
   CreateRowDto,
   createRowSchema,
   CreateViewDto,
   createViewSchema,
+  MoveViewDto,
+  moveViewSchema,
   UpdatePropertyDto,
   updatePropertySchema,
   UpdateRowDto,
@@ -33,9 +37,31 @@ export class DatabasesController {
     private readonly databaseQueryService: DatabaseQueryService,
   ) {}
 
+  /** Id/name listing for the linked-view picker (§20C.3). */
+  @Get('databases')
+  listAll() {
+    return this.databasesService.listAll();
+  }
+
+  @Post('databases')
+  create(@Body(new ZodValidationPipe(createDatabaseSchema)) body: CreateDatabaseDto) {
+    return this.databasesService.create(body);
+  }
+
   @Get('databases/by-page/:pageId')
   getByPage(@Param('pageId', ParseUUIDPipe) pageId: string) {
     return this.databasesService.getByPage(pageId);
+  }
+
+  /** Addresses a database directly, not via its owner page — inline/linked blocks reference a database by id (§20C.3). */
+  @Get('databases/:id')
+  getById(@Param('id', ParseUUIDPipe) id: string) {
+    return this.databasesService.getById(id);
+  }
+
+  @Get('database-rows/by-page/:pageId')
+  findRowByPageId(@Param('pageId', ParseUUIDPipe) pageId: string) {
+    return this.databasesService.findRowByPageId(pageId);
   }
 
   @Post('databases/:id/query')
@@ -72,7 +98,7 @@ export class DatabasesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(createRowSchema)) body: CreateRowDto,
   ) {
-    return this.databasesService.createRow(id, body.values, body.id);
+    return this.databasesService.createRow(id, body.values, body.id, body.templateId);
   }
 
   @Patch('database-rows/:id')
@@ -86,6 +112,17 @@ export class DatabasesController {
   @Delete('database-rows/:id')
   deleteRow(@Param('id', ParseUUIDPipe) id: string) {
     return this.databasesService.deleteRow(id);
+  }
+
+  /** Soft delete (§20D.5) — mirrors onto the row's page, if it has one. */
+  @Post('database-rows/:id/archive')
+  archiveRow(@Param('id', ParseUUIDPipe) id: string) {
+    return this.databasesService.archiveRow(id);
+  }
+
+  @Post('database-rows/:id/restore')
+  restoreRow(@Param('id', ParseUUIDPipe) id: string) {
+    return this.databasesService.restoreRow(id);
   }
 
   @Post('databases/:id/views')
@@ -110,5 +147,19 @@ export class DatabasesController {
   @Delete('database-views/:id')
   deleteView(@Param('id', ParseUUIDPipe) id: string) {
     return this.databasesService.deleteView(id);
+  }
+
+  @Post('database-views/:id/duplicate')
+  duplicateView(@Param('id', ParseUUIDPipe) id: string) {
+    return this.databasesService.duplicateView(id);
+  }
+
+  /** Swaps position with the adjacent tab — pointer-drag reordering is Sprint 21. */
+  @Post('database-views/:id/move')
+  moveView(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(moveViewSchema)) body: MoveViewDto,
+  ) {
+    return this.databasesService.moveView(id, body.direction);
   }
 }

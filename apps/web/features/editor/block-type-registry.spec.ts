@@ -34,6 +34,7 @@ const REGISTERED_KEYS = [
   'pdf',
   'bookmark',
   'embed',
+  'databaseView',
 ];
 
 function text(value: string, marks?: Array<{ type: string; attrs?: Record<string, unknown> }>) {
@@ -354,6 +355,14 @@ describe('BlockTypeRegistry', () => {
     expect(def.toHtml(node)).toContain('sandbox="allow-scripts allow-same-origin allow-popups"');
     expect(def.toMarkdown(node)).toBe('[Embed](https://example.com/widget)');
     expect(def.toPlainText(node)).toBe('');
+  });
+
+  it('databaseView has no plain-text content — the live table can\'t be resolved in a serializer', () => {
+    const def = BlockTypeRegistry.get('databaseView')!;
+    const node = { type: 'databaseView', attrs: { databaseId: 'db-1', mode: 'inline' } };
+    expect(def.toPlainText(node)).toBe('');
+    expect(def.toMarkdown(node)).toBe('');
+    expect(def.toHtml(node)).toContain('data-mode="inline"');
   });
 
   it('paragraph serializes an inline equation node inside its text run', () => {

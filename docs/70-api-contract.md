@@ -182,12 +182,13 @@ PUT    /pages/:pageId/blocks         -- jadi upsert-by-id (§11E.3)
 GET    /blocks/:id                   -- BARU, resolusi lewat descendant_ids (§11E.4)
 
 Databases
+GET    /databases                    -- id/name/ownerPageId/isInline, untuk picker linked view (§20C.3)
 GET    /databases/by-page/:pageId
-GET    /databases/:id                -- BARU, untuk inline & linked view (§20C)
-POST   /databases                    -- BARU, membuat database inline
-PATCH  /databases/:id                -- BARU
-DELETE /databases/:id                -- BARU
-POST   /databases/:id/query          -- BARU §22A, satu-satunya jalur baca baris
+GET    /databases/:id                -- untuk inline & linked view (§20C)
+POST   /databases                    -- membuat database (page-backed atau inline, §20C)
+PATCH  /databases/:id                -- BELUM, rename/re-konfigurasi database
+DELETE /databases/:id                -- BELUM
+POST   /databases/:id/query          -- §22A, satu-satunya jalur baca baris
 
 Properties
 POST   /databases/:id/properties
@@ -198,8 +199,9 @@ Rows
 POST   /databases/:id/rows
 PATCH  /database-rows/:id            -- values selalu LENGKAP (§10B.5)
 DELETE /database-rows/:id
-POST   /database-rows/:id/archive    -- BARU §20D.5
-POST   /database-rows/:id/restore    -- BARU
+POST   /database-rows/:id/archive    -- §20D.5, mirrors onto the row's page if it has one
+POST   /database-rows/:id/restore
+GET    /database-rows/by-page/:pageId -- row lookup for the row-page properties panel (§20D)
 
 Relations
 POST   /database-rows/:id/relations/:propertyId    -- BARU §23A
@@ -209,7 +211,8 @@ Views
 POST   /databases/:id/views
 PATCH  /database-views/:id           -- config divalidasi viewConfigSchema (§21A)
 DELETE /database-views/:id
-POST   /database-views/:id/duplicate -- BARU
+POST   /database-views/:id/duplicate
+POST   /database-views/:id/move      -- geser posisi dgn tab sebelah; drag-and-drop di Sprint 21
 
 Canvas
 GET    /pages/:pageId/canvas
@@ -249,8 +252,8 @@ POST   /import/preview               -- BARU §30A.2
 POST   /import/commit                -- BARU
 
 Templates
-GET    /templates                    -- BARU, tabel sudah ada tapi belum dipakai
-POST   /templates
+GET    /databases/:id/templates      -- template baris, satu database (§20D)
+POST   /databases/:id/templates
 DELETE /templates/:id
 
 Health

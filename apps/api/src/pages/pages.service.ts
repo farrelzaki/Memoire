@@ -4,10 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { DatabasesService } from '../databases/databases.service';
 import { DRIZZLE_DB, DrizzleDB, DrizzleTx } from '../db/drizzle.provider';
-import { blocks, Page, pageCanvases, PageType, pages } from '../db/schema';
+import { blocks, databaseProperties, databaseRows, Page, pageCanvases, PageType, pages } from '../db/schema';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 export type CreatePageInput = {
@@ -62,13 +62,19 @@ export class PagesService {
     return page;
   }
 
-  /** All pages in the workspace, ordered by position. Caller filters by tree/trash. */
+  /**
+   * All pages in the workspace, ordered by position. Caller filters by
+   * tree/trash. Excludes row pages (§20D.3) — this feeds the sidebar,
+   * command palette, and `buildPageTree`, and 200 database rows would
+   * otherwise flood all three. A row page is still reachable directly by id
+   * (`findOne`) or through its row's peek/table cell.
+   */
   async findAll(): Promise<Page[]> {
     const workspace = await this.workspacesService.getOrCreateDefault();
     return this.db
       .select()
       .from(pages)
-      .where(eq(pages.workspaceId, workspace.id))
+      .where(and(eq(pages.workspaceId, workspace.id), isNull(pages.databaseId)))
       .orderBy(sql`${pages.position} asc`);
   }
 
@@ -78,35 +84,66 @@ export class PagesService {
     return page;
   }
 
+  /**
+   * `data.title` on a row page also patches the row's title-property value
+   * (§20D.4), same transaction — the other half of the sync lives in
+   * `DatabasesService.updateRow`, which patches `pages.title` back.
+   */
   async update(id: string, data: UpdatePageInput): Promise<Page> {
-    await this.findOne(id);
-    const [page] = await this.db
-      .update(pages)
-      .set({ ...data, updatedAt: sql`now()` })
-      .where(eq(pages.id, id))
-      .returning();
-    return page;
+    const existing = await this.findOne(id);
+
+    return this.db.transaction(async (tx) => {
+      const [page] = await tx
+        .update(pages)
+        .set({ ...data, updatedAt: sql`now()` })
+        .where(eq(pages.id, id))
+        .returning();
+
+      if (data.title !== undefined && existing.databaseId) {
+        const [row] = await tx.select().from(databaseRows).where(eq(databaseRows.pageId, id));
+        const [titleProperty] = row
+          ? await tx
+              .select()
+              .from(databaseProperties)
+              .where(and(eq(databaseProperties.databaseId, existing.databaseId), eq(databaseProperties.type, 'title')))
+          : [];
+        if (row && titleProperty) {
+          await tx
+            .update(databaseRows)
+            .set({ values: { ...row.values, [titleProperty.id]: data.title }, updatedAt: sql`now()` })
+            .where(eq(databaseRows.id, row.id));
+        }
+      }
+
+      return page;
+    });
   }
 
-  /** Soft delete → Trash (§32). */
+  /** Soft delete → Trash (§32). Mirrors onto the row, if this is a row page (§20D.5). */
   async archive(id: string): Promise<Page> {
-    await this.findOne(id);
-    const [page] = await this.db
-      .update(pages)
-      .set({ isArchived: true, updatedAt: sql`now()` })
-      .where(eq(pages.id, id))
-      .returning();
-    return page;
+    return this.setArchived(id, true);
   }
 
   async restore(id: string): Promise<Page> {
-    await this.findOne(id);
-    const [page] = await this.db
-      .update(pages)
-      .set({ isArchived: false, updatedAt: sql`now()` })
-      .where(eq(pages.id, id))
-      .returning();
-    return page;
+    return this.setArchived(id, false);
+  }
+
+  private async setArchived(id: string, isArchived: boolean): Promise<Page> {
+    const existing = await this.findOne(id);
+    return this.db.transaction(async (tx) => {
+      const [page] = await tx
+        .update(pages)
+        .set({ isArchived, updatedAt: sql`now()` })
+        .where(eq(pages.id, id))
+        .returning();
+      if (existing.databaseId) {
+        await tx
+          .update(databaseRows)
+          .set({ isArchived, updatedAt: sql`now()` })
+          .where(eq(databaseRows.pageId, id));
+      }
+      return page;
+    });
   }
 
   /**
@@ -185,10 +222,13 @@ export class PagesService {
       await this.databasesService.duplicateForPage(source.id, copy.id, tx);
     }
 
+    // Row pages are recreated by `DatabasesService.duplicateForPage` above
+    // (one per copied row) — recursing into them here too would double them
+    // up, once from that copy loop and once from this tree walk (§20D.3).
     const children = await tx
       .select()
       .from(pages)
-      .where(eq(pages.parentPageId, source.id))
+      .where(and(eq(pages.parentPageId, source.id), isNull(pages.databaseId)))
       .orderBy(sql`${pages.position} asc`);
     for (const child of children) {
       await this.copyPageTree(tx, child, copy.id);

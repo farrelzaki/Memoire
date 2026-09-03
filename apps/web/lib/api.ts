@@ -7,6 +7,7 @@ import type {
   Backlink,
   Block,
   CanvasData,
+  Database,
   DatabaseAggregate,
   DatabaseProperty,
   DatabaseQueryResult,
@@ -17,6 +18,7 @@ import type {
   PageSettings,
   PageType,
   PropertyType,
+  RowTemplate,
   SearchHit,
   ViewConfig,
 } from './types';
@@ -165,6 +167,14 @@ export const api = {
 
   getDatabase: (pageId: string) =>
     request<DatabaseAggregate>(`/databases/by-page/${pageId}`),
+  /** Addresses a database directly — inline/linked blocks reference a database by id, not its owner page (§20C.3). */
+  getDatabaseById: (id: string) => request<DatabaseAggregate>(`/databases/${id}`),
+  listDatabases: () => request<Database[]>('/databases'),
+  createDatabase: (body: { id?: string; ownerPageId: string; name?: string; isInline: boolean }) =>
+    request<Database>('/databases', {
+      method: 'POST',
+      body: JSON.stringify({ ...body, id: body.id ?? newClientId() }),
+    }),
   createProperty: (
     databaseId: string,
     body: { id?: string; name: string; type: PropertyType; config?: Record<string, unknown> },
@@ -180,10 +190,10 @@ export const api = {
     }),
   deleteProperty: (id: string) =>
     request<{ id: string; deleted: boolean }>(`/database-properties/${id}`, { method: 'DELETE' }),
-  createRow: (databaseId: string, values: Record<string, unknown> = {}, id?: string) =>
+  createRow: (databaseId: string, values: Record<string, unknown> = {}, id?: string, templateId?: string) =>
     request<DatabaseRow>(`/databases/${databaseId}/rows`, {
       method: 'POST',
-      body: JSON.stringify({ id: id ?? newClientId(), values }),
+      body: JSON.stringify({ id: id ?? newClientId(), values, templateId }),
     }),
   updateRow: (id: string, values: Record<string, unknown>) =>
     request<DatabaseRow>(`/database-rows/${id}`, {
@@ -192,6 +202,17 @@ export const api = {
     }),
   deleteRow: (id: string) =>
     request<{ id: string; deleted: boolean }>(`/database-rows/${id}`, { method: 'DELETE' }),
+  archiveRow: (id: string) => request<DatabaseRow>(`/database-rows/${id}/archive`, { method: 'POST' }),
+  restoreRow: (id: string) => request<DatabaseRow>(`/database-rows/${id}/restore`, { method: 'POST' }),
+  getRowByPage: (pageId: string) => request<DatabaseRow | null>(`/database-rows/by-page/${pageId}`),
+  listTemplates: (databaseId: string) => request<RowTemplate[]>(`/databases/${databaseId}/templates`),
+  createTemplate: (databaseId: string, body: { name: string; icon?: string | null; content: Record<string, unknown> }) =>
+    request<RowTemplate>(`/databases/${databaseId}/templates`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deleteTemplate: (id: string) =>
+    request<{ id: string; deleted: boolean }>(`/templates/${id}`, { method: 'DELETE' }),
   createView: (
     databaseId: string,
     body: { id?: string; name: string; type: string; config?: Record<string, unknown> },
@@ -207,6 +228,12 @@ export const api = {
     }),
   deleteView: (id: string) =>
     request<{ id: string; deleted: boolean }>(`/database-views/${id}`, { method: 'DELETE' }),
+  duplicateView: (id: string) => request<DatabaseView>(`/database-views/${id}/duplicate`, { method: 'POST' }),
+  moveView: (id: string, direction: 'left' | 'right') =>
+    request<DatabaseView[]>(`/database-views/${id}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ direction }),
+    }),
   /** The one path that reads rows — filter/sort/group/aggregation all run server-side (§22A). */
   queryDatabase: (
     databaseId: string,

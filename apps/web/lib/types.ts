@@ -25,6 +25,9 @@ export interface Page {
   isArchived: boolean;
   position: number;
   settings: PageSettings;
+  // Set only for a row page — this page IS a database row's detail page
+  // (§20D.1), rendered as a plain document plus a properties panel.
+  databaseId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -100,10 +103,12 @@ export type PropertyType =
   | 'last_edited_time'
   | 'unique_id';
 
-/** Mirrors the backend `databases` row (§10.5). */
+/** Mirrors the backend `databases` row (§10.5, §20C.2). */
 export interface Database {
   id: string;
-  pageId: string;
+  workspaceId: string;
+  ownerPageId: string;
+  isInline: boolean;
   name: string;
   createdAt: string;
   updatedAt: string;
@@ -127,8 +132,18 @@ export interface DatabaseRow {
   values: Record<string, unknown> | null;
   position: number;
   uniqueIdSeq: number | null;
+  isArchived: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Row templates (§20D) — pre-filled `values` a new row can be seeded from. */
+export interface RowTemplate {
+  id: string;
+  databaseId: string;
+  name: string;
+  icon: string | null;
+  content: Record<string, unknown> | null;
 }
 
 export interface DatabaseAggregate {

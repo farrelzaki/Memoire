@@ -59,7 +59,7 @@ export class SearchService {
     const dbRows = await this.db
       .select({ pageId: pages.id, title: pages.title })
       .from(databases)
-      .innerJoin(pages, eq(databases.pageId, pages.id))
+      .innerJoin(pages, eq(databases.ownerPageId, pages.id))
       .where(and(ilike(databases.name, pattern), eq(pages.isArchived, false)))
       .limit(10);
     for (const row of dbRows) {
@@ -73,7 +73,7 @@ export class SearchService {
       .select({ pageId: pages.id, title: pages.title })
       .from(databaseRows)
       .innerJoin(databases, eq(databaseRows.databaseId, databases.id))
-      .innerJoin(pages, eq(databases.pageId, pages.id))
+      .innerJoin(pages, eq(databases.ownerPageId, pages.id))
       .where(
         and(
           sql`${databaseRows.values}::text ilike ${pattern}`,

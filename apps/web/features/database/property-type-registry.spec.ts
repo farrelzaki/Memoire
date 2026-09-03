@@ -92,6 +92,7 @@ describe('rowToPlainText', () => {
       values: { title: 'Alpha', done: true, count: 3 },
       position: 0,
       uniqueIdSeq: null,
+      isArchived: false,
       createdAt: '',
       updatedAt: '',
     };

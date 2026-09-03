@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { getContentType } from '@/features/content-types/registry';
+import { RowPropertiesPanel } from '@/features/database/row-properties-panel';
 import { BacklinksPanel } from '@/features/shell/backlinks-panel';
 import { PageHeader } from '@/features/shell/page-header';
 import { Topbar } from '@/features/shell/topbar';
@@ -55,6 +56,7 @@ export default function PageDetail() {
       />
 
       <div className={contentWidth}>
+        {page.databaseId && <RowPropertiesPanel pageId={pageId} databaseId={page.databaseId} />}
         <BacklinksPanel pageId={pageId} />
       </div>
 

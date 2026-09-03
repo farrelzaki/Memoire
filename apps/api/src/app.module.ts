@@ -14,6 +14,7 @@ import { PageLinksModule } from './page-links/page-links.module';
 import { PagesModule } from './pages/pages.module';
 import { SearchModule } from './search/search.module';
 import { StorageModule } from './storage/storage.module';
+import { TemplatesModule } from './templates/templates.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 
 @Module({
@@ -32,6 +33,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     ExportModule,
     WhiteboardModule,
     LinkPreviewModule,
+    TemplatesModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
 })

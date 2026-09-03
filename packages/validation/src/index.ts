@@ -4,3 +4,4 @@ export * from './block';
 export * from './database';
 export * from './link-preview';
 export * from './view-config';
+export * from './template';

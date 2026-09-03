@@ -38,6 +38,15 @@ const rowFixture = {
 describe('Databases (e2e)', () => {
   let app: INestApplication;
 
+  const viewFixture = {
+    id: '66666666-6666-6666-6666-666666666666',
+    databaseId: databaseFixture.id,
+    name: 'Table',
+    type: 'table',
+    config: null,
+    position: 0,
+  };
+
   const databasesService = {
     getByPage: vi.fn(async () => ({
       database: databaseFixture,
@@ -45,20 +54,26 @@ describe('Databases (e2e)', () => {
       rows: [rowFixture],
       views: [],
     })),
+    getById: vi.fn(async () => ({
+      database: databaseFixture,
+      properties: [propertyFixture],
+      rows: [rowFixture],
+      views: [],
+    })),
+    listAll: vi.fn(async () => [databaseFixture]),
+    create: vi.fn(async () => databaseFixture),
     createProperty: vi.fn(async () => propertyFixture),
     updateProperty: vi.fn(async () => propertyFixture),
     deleteProperty: vi.fn(async () => ({ id: propertyFixture.id, deleted: true })),
     createRow: vi.fn(async () => rowFixture),
     updateRow: vi.fn(async () => rowFixture),
     deleteRow: vi.fn(async () => ({ id: rowFixture.id, deleted: true })),
-    createView: vi.fn(async () => ({
-      id: '66666666-6666-6666-6666-666666666666',
-      databaseId: databaseFixture.id,
-      name: 'Table',
-      type: 'table',
-      config: null,
-      position: 0,
-    })),
+    archiveRow: vi.fn(async () => ({ ...rowFixture, isArchived: true })),
+    restoreRow: vi.fn(async () => ({ ...rowFixture, isArchived: false })),
+    findRowByPageId: vi.fn(async () => rowFixture),
+    createView: vi.fn(async () => viewFixture),
+    duplicateView: vi.fn(async () => ({ ...viewFixture, id: '55555555-5555-5555-5555-555555555555', name: 'Table (copy)' })),
+    moveView: vi.fn(async () => [viewFixture]),
   };
 
   beforeAll(async () => {
@@ -125,6 +140,7 @@ describe('Databases (e2e)', () => {
       databaseFixture.id,
       { status: 'Todo' },
       clientId,
+      undefined,
     );
   });
 
@@ -153,5 +169,73 @@ describe('Databases (e2e)', () => {
       .delete(`/api/database-rows/${rowFixture.id}`)
       .expect(200);
     expect(res.body).toMatchObject({ deleted: true });
+  });
+
+  it('GET /api/databases lists databases', async () => {
+    const res = await request(app.getHttpServer()).get('/api/databases').expect(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].id).toBe(databaseFixture.id);
+  });
+
+  it('POST /api/databases creates a database (§20C)', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/databases')
+      .send({ ownerPageId: databaseFixture.pageId, name: 'Inline', isInline: true })
+      .expect(201);
+    expect(res.body.id).toBe(databaseFixture.id);
+    expect(databasesService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerPageId: databaseFixture.pageId, isInline: true }),
+    );
+  });
+
+  it('GET /api/databases/:id returns the aggregate by database id (§20C.3)', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/api/databases/${databaseFixture.id}`)
+      .expect(200);
+    expect(res.body.database.id).toBe(databaseFixture.id);
+  });
+
+  it('GET /api/database-rows/by-page/:pageId finds the row behind a row page (§20D)', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/api/database-rows/by-page/${rowFixture.id}`)
+      .expect(200);
+    expect(res.body.id).toBe(rowFixture.id);
+  });
+
+  it('POST /api/database-rows/:id/archive soft-deletes a row (§20D.5)', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/database-rows/${rowFixture.id}/archive`)
+      .expect(201);
+    expect(res.body.isArchived).toBe(true);
+  });
+
+  it('POST /api/database-rows/:id/restore un-archives a row', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/database-rows/${rowFixture.id}/restore`)
+      .expect(201);
+    expect(res.body.isArchived).toBe(false);
+  });
+
+  it('POST /api/database-views/:id/duplicate copies a view', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/database-views/${viewFixture.id}/duplicate`)
+      .expect(201);
+    expect(res.body.name).toBe('Table (copy)');
+  });
+
+  it('POST /api/database-views/:id/move reorders tabs', async () => {
+    await request(app.getHttpServer())
+      .post(`/api/database-views/${viewFixture.id}/move`)
+      .send({ direction: 'left' })
+      .expect(201);
+    expect(databasesService.moveView).toHaveBeenCalledWith(viewFixture.id, 'left');
+  });
+
+  it('POST /api/database-views/:id/move rejects an invalid direction', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/database-views/${viewFixture.id}/move`)
+      .send({ direction: 'up' })
+      .expect(400);
+    expect(res.body.success).toBe(false);
   });
 });
