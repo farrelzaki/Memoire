@@ -24,16 +24,22 @@ export function Command({
 export function CommandDialog({
   open,
   onOpenChange,
+  shouldFilter,
   children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Set false when results are already server-filtered/ranked (§25A) — cmdk's own client-side fuzzy match would otherwise re-filter them. */
+  shouldFilter?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl overflow-hidden p-0">
-        <Command className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-muted-foreground">
+        <Command
+          shouldFilter={shouldFilter}
+          className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-muted-foreground"
+        >
           {children}
         </Command>
       </DialogContent>

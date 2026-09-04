@@ -40,10 +40,17 @@ describe('movePageSchema', () => {
     });
   });
 
-  it('accepts an explicit position', () => {
-    expect(movePageSchema.parse({ parentPageId: null, position: 2 })).toEqual({
+  it('accepts explicit beforeId/afterId anchors', () => {
+    const beforeId = '11111111-1111-1111-1111-111111111111';
+    const afterId = '22222222-2222-2222-2222-222222222222';
+    expect(movePageSchema.parse({ parentPageId: null, beforeId, afterId })).toEqual({
       parentPageId: null,
-      position: 2,
+      beforeId,
+      afterId,
     });
+  });
+
+  it('rejects a non-uuid anchor', () => {
+    expect(() => movePageSchema.parse({ beforeId: 'not-a-uuid' })).toThrow();
   });
 });

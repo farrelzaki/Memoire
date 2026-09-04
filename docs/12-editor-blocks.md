@@ -289,6 +289,14 @@ Paste
   teks Markdown yang ditempel dikonversi menjadi blok, bukan menjadi satu paragraf
   mentah. Memakai parser yang sama dengan import Markdown (§30A) supaya
   "tempel" dan "impor" tidak pernah berbeda hasilnya.
+  BELUM TERWUJUD (per Sprint 24): `apps/api/src/import/markdown-to-blocks.lib.ts`
+  (dibangun Sprint 24 untuk import) belum disambungkan ke paste handler
+  (`document-editor.tsx` saat ini cuma menangani file gambar dari clipboard,
+  bukan teks Markdown). Baris roadmap Sprint 15 yang mengklaim ini selesai
+  ternyata belum. Menyambungkannya butuh entah memindah parser itu ke
+  frontend (kandidat kuat untuk paket bersama baru — dua konsumen nyata,
+  memenuhi syarat ADR-13 yang selama ini menolak paket spekulatif) atau
+  endpoint backend khusus paste. Belum diputuskan; dicatat sebagai utang.
 
 Copy
   menyalin blok menghasilkan Markdown di clipboard teks/plain dan HTML di

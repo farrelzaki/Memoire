@@ -2,174 +2,166 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from '@/components/ui/command';
+import { contentTypes } from '@/features/content-types/registry';
 import { useCreatePage } from '@/hooks/use-create-page';
 import { api } from '@/lib/api';
 import { downloadJson } from '@/lib/download';
 import { nextTheme } from '@/lib/theme';
 import { useCommandPaletteStore } from '@/stores/command-palette';
+import { useRecentsStore } from '@/stores/recents';
 import { useSidebarStore } from '@/stores/sidebar';
 import { useThemeStore } from '@/stores/theme';
 
-interface Item {
-  id: string;
-  label: string;
-  hint?: string;
-  run: () => void;
-}
+const QUICK_SEARCH_DEBOUNCE_MS = 150;
 
+/**
+ * `Ctrl+K` command palette / `Ctrl+P` quick switcher (§26, §27, Sprint 23) —
+ * migrated onto `components/ui/command.tsx`'s `cmdk` wrapper (previously
+ * built but unused). `shouldFilter={false}`: results come from the server
+ * (`GET /search`, debounced) rather than cmdk's built-in client-side fuzzy
+ * matcher, which would otherwise re-filter an already-ranked result list.
+ */
 export function CommandPalette() {
   const open = useCommandPaletteStore((s) => s.open);
+  const mode = useCommandPaletteStore((s) => s.mode);
   const setOpen = useCommandPaletteStore((s) => s.setOpen);
   const router = useRouter();
   const createPage = useCreatePage();
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
   const toggleSidebar = useSidebarStore((s) => s.toggle);
+  const recents = useRecentsStore((s) => s.entries);
 
   const [query, setQuery] = useState('');
-  const [index, setIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const { data: pages = [] } = useQuery({
-    queryKey: ['pages'],
-    queryFn: api.listPages,
-    enabled: open,
-  });
-
-  const items = useMemo<Item[]>(() => {
-    const active = pages.filter((p) => !p.isArchived);
-    const matched = query
-      ? active.filter((p) => p.title.toLowerCase().includes(query.toLowerCase()))
-      : [];
-
-    const pageItems: Item[] = matched.map((p) => ({
-      id: `page:${p.id}`,
-      label: p.title || 'Untitled',
-      hint: 'Go to page',
-      run: () => {
-        router.push(`/${p.id}`);
-        setOpen(false);
-      },
-    }));
-
-    const actionItems: Item[] = [
-      {
-        id: 'new-page',
-        label: 'New page',
-        hint: 'Document',
-        run: () => {
-          createPage.mutate({});
-          setOpen(false);
-        },
-      },
-      {
-        id: 'new-database',
-        label: 'New database',
-        hint: 'Database',
-        run: () => {
-          createPage.mutate({ type: 'database' });
-          setOpen(false);
-        },
-      },
-      {
-        id: 'toggle-theme',
-        label: `Theme: ${theme}`,
-        hint: 'Cycle',
-        run: () => setTheme(nextTheme(theme)),
-      },
-      { id: 'toggle-sidebar', label: 'Toggle sidebar', run: () => toggleSidebar() },
-      {
-        id: 'export-json',
-        label: 'Export JSON',
-        hint: 'Backup',
-        run: () => {
-          setOpen(false);
-          void api.exportWorkspace().then((data) =>
-            downloadJson(`memoire-export-${new Date().toISOString().slice(0, 10)}.json`, data),
-          );
-        },
-      },
-    ];
-
-    const filteredActions = query
-      ? actionItems.filter((a) => a.label.toLowerCase().includes(query.toLowerCase()))
-      : actionItems;
-
-    return [...pageItems, ...filteredActions];
-  }, [pages, query, theme, router, createPage, setTheme, toggleSidebar, setOpen]);
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (open) {
-      setQuery('');
-      setIndex(0);
-      inputRef.current?.focus();
-    }
+    if (open) setQuery('');
   }, [open]);
 
   useEffect(() => {
-    setIndex(0);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => setDebouncedQuery(query), QUICK_SEARCH_DEBOUNCE_MS);
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
   }, [query]);
 
-  if (!open) return null;
+  const { data: results = [] } = useQuery({
+    queryKey: ['search', 'quick', debouncedQuery, mode],
+    queryFn: () => api.search(debouncedQuery, { mode: 'quick', limit: 8 }),
+    enabled: open && debouncedQuery.trim().length > 0,
+  });
 
-  const run = (item: Item) => item.run();
-
-  const onKey = (event: React.KeyboardEvent) => {
-    if (event.key === 'Escape') {
-      setOpen(false);
-      return;
-    }
-    if (items.length === 0) return;
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setIndex((i) => (i + 1) % items.length);
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setIndex((i) => (i - 1 + items.length) % items.length);
-    } else if (event.key === 'Enter') {
-      event.preventDefault();
-      run(items[index]);
-    }
+  const runAndClose = (fn: () => void) => {
+    fn();
+    setOpen(false);
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[15vh]"
-      onMouseDown={() => setOpen(false)}
-    >
-      <div
-        className="w-[32rem] max-w-[90vw] overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <input
-          ref={inputRef}
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={onKey}
-          placeholder="Search pages, or type a command…"
-          className="w-full border-b border-zinc-200 bg-transparent px-4 py-3 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:border-zinc-700 dark:text-zinc-100"
-        />
-        <div className="max-h-72 overflow-y-auto p-1">
-          {items.length === 0 && (
-            <p className="px-3 py-2 text-sm text-zinc-400">No results.</p>
-          )}
-          {items.map((item, i) => (
-            <button
-              key={item.id}
-              onMouseEnter={() => setIndex(i)}
-              onClick={() => run(item)}
-              className={`flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm text-zinc-700 dark:text-zinc-200 ${
-                i === index ? 'bg-zinc-100 dark:bg-zinc-800' : ''
-              }`}
-            >
-              <span>{item.label}</span>
-              {item.hint && <span className="text-xs text-zinc-400">{item.hint}</span>}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
+    <CommandDialog open={open} onOpenChange={(next) => setOpen(next, mode)} shouldFilter={false}>
+      <CommandInput
+        value={query}
+        onValueChange={setQuery}
+        placeholder={mode === 'switcher' ? 'Go to page…' : 'Search pages, or type a command…'}
+      />
+      <CommandList>
+        <CommandEmpty>No results.</CommandEmpty>
+
+        {query.trim().length === 0 && recents.length > 0 && (
+          <CommandGroup heading="Recents">
+            {recents.map((entry) => (
+              <CommandItem
+                key={entry.id}
+                value={`recent-${entry.id}`}
+                onSelect={() => runAndClose(() => router.push(`/${entry.id}`))}
+              >
+                <span className="w-4 shrink-0 text-center text-muted-foreground">
+                  {entry.icon ?? '📄'}
+                </span>
+                {entry.title || 'Untitled'}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {results.length > 0 && (
+          <CommandGroup heading="Search results">
+            {results.map((hit) => (
+              <CommandItem
+                key={`${hit.type}-${hit.pageId}-${hit.blockId ?? ''}-${hit.rowId ?? ''}`}
+                value={`result-${hit.pageId}-${hit.blockId ?? ''}-${hit.rowId ?? ''}`}
+                onSelect={() =>
+                  runAndClose(() => {
+                    const anchor = hit.blockId ? `#block-${hit.blockId}` : '';
+                    router.push(`/${hit.pageId}${anchor}`);
+                  })
+                }
+              >
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate">{hit.title || 'Untitled'}</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {hit.breadcrumb.join(' / ')}
+                  </span>
+                </div>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {mode === 'command' && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Create">
+              {Object.values(contentTypes)
+                .filter((ct) => ct.createInSidebar)
+                .map((ct) => (
+                  <CommandItem
+                    key={ct.key}
+                    value={`create-${ct.key}`}
+                    onSelect={() => runAndClose(() => createPage.mutate({ type: ct.key }))}
+                  >
+                    <span className="w-4 shrink-0 text-center text-muted-foreground">{ct.icon}</span>
+                    New {ct.label.toLowerCase()}
+                  </CommandItem>
+                ))}
+            </CommandGroup>
+
+            <CommandSeparator />
+            <CommandGroup heading="Actions">
+              <CommandItem value="toggle-theme" onSelect={() => setTheme(nextTheme(theme))}>
+                Theme: {theme}
+              </CommandItem>
+              <CommandItem value="toggle-sidebar" onSelect={() => runAndClose(() => toggleSidebar())}>
+                Toggle sidebar
+              </CommandItem>
+              <CommandItem
+                value="export-json"
+                onSelect={() =>
+                  runAndClose(() => {
+                    void api.exportWorkspace().then((data) =>
+                      downloadJson(`memoire-export-${new Date().toISOString().slice(0, 10)}.json`, data),
+                    );
+                  })
+                }
+              >
+                Export JSON
+              </CommandItem>
+            </CommandGroup>
+          </>
+        )}
+      </CommandList>
+    </CommandDialog>
   );
 }

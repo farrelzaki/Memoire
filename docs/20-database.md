@@ -446,16 +446,21 @@ base (semua view)
   search          string                                 -- pencarian dalam view
 
 table     rowHeight 'short'|'medium'|'tall', wrapCells, showRowNumbers, groupBy?
-board     groupBy (wajib), subGroupBy?, cardSize, cardPreview, colorByGroup
+board     groupBy (wajib), subGroupBy?, cardSize, cardPreview, colorByGroup, collapsedGroups[]
 calendar  dateProperty (wajib), endDateProperty?, showWeekends, span 'month'|'week'
 gallery   cardSize, cardPreview, fitImage
 list      -- hanya base
 timeline  startProperty (wajib), endProperty?, zoom, showTable
 
-GroupConfig
-  propertyId, hideEmpty, order[], collapsed[]
-    order      -- urutan grup yang ditentukan pengguna (drag kolom board)
-    collapsed  -- grup yang sedang dilipat, ikut tersimpan
+collapsedGroups (Sprint 21) — array kunci grup yang kartunya sedang disembunyikan:
+  `optionId` di level atas, `optionId:subOptionId` saat sub-grouping aktif,
+  `__empty__` untuk kolom "no status". Bukan `GroupConfig` bertipe tersendiri
+  dengan `hideEmpty`/`order[]` — urutan kolom board mengikuti urutan
+  `config.options[]` milik properti select/status itu sendiri. Menulis ulang
+  urutan opsi lewat `PATCH /database-properties/:id` sudah didukung server,
+  tapi UI drag-untuk-mengurutkan opsi sendiri belum dibangun Sprint 21 (belum
+  ada editor opsi untuk properti yang sudah dibuat sama sekali, terlepas dari
+  drag) — dicatat di §71 sebagai BELUM, bukan gap Sprint 21 secara spesifik.
 
 cardPreview
   'none' | 'cover' | 'content' | { propertyId }   -- properti files sebagai gambar kartu
@@ -728,6 +733,12 @@ database_row_index   (row_id, property_id, text_value, num_value, date_value, bo
 
 Keyset (cursor pada tuple kunci sort + `id`), bukan `OFFSET`. `OFFSET` melambat linear dan
 melewatkan baris ketika ada penyisipan di tengah scroll — keduanya terasa persis seperti bug.
+
+Tanpa sort eksplisit, tuple kunci itu bukan cuma `id` — `position` (§19A.4, ADR-22) ikut jadi
+kolom sort implisit (`buildSortSql`/`buildKeysetSql`), supaya urutan drag manual sungguhan
+mengubah apa yang terlihat, dan keyset cursor-nya tetap konsisten dengan urutan itu (menggeser
+sebuah baris pertengahan scroll berperilaku sama seperti insert baris baru pertengahan scroll —
+sudah ditoleransi desain keyset ini sejak awal).
 
 ---
 

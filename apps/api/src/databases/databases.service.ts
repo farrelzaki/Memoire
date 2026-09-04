@@ -8,7 +8,14 @@ import {
   referencedPropertyIds,
   type FormulaAst,
 } from '@memoire/formula';
-import { migrateViewConfig, type FormulaConfig, type RelationConfig, type ViewType } from '@memoire/validation';
+import {
+  fractionalPosition,
+  migrateViewConfig,
+  renormalizePositions,
+  type FormulaConfig,
+  type RelationConfig,
+  type ViewType,
+} from '@memoire/validation';
 import { DRIZZLE_DB, DrizzleDB, DrizzleTx } from '../db/drizzle.provider';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { remapRowValues, remapViewConfig } from './duplicate.lib';
@@ -669,27 +676,141 @@ export class DatabasesService {
         }
       }
 
-      const properties = await tx
+      return this.recomputeRowAndDependents(tx, updated);
+    });
+  }
+
+  /**
+   * Recomputes this row's own formula/rollup properties, then any rollup
+   * elsewhere that follows a relation pointing AT this row (§24A.5 case 3,
+   * §24B.4) — its target value just changed underneath it. Shared by every
+   * write path that changes `values` (`updateRow`, `reorderRowIntoGroup`).
+   */
+  private async recomputeRowAndDependents(tx: DrizzleTx, row: DatabaseRow): Promise<DatabaseRow> {
+    const properties = await tx
+      .select()
+      .from(databaseProperties)
+      .where(eq(databaseProperties.databaseId, row.databaseId));
+    const recomputed = await this.formulaRecompute.recomputeRow(tx, row.databaseId, row, properties);
+
+    const referencingPropertyIds = await tx
+      .selectDistinct({ propertyId: databaseRelationLinks.propertyId })
+      .from(databaseRelationLinks)
+      .where(eq(databaseRelationLinks.toRowId, row.id));
+    if (referencingPropertyIds.length > 0) {
+      await this.formulaRecompute.recomputeDependents(
+        tx,
+        row.id,
+        referencingPropertyIds.map((r) => r.propertyId),
+      );
+    }
+
+    return recomputed;
+  }
+
+  /**
+   * Position for an item dropped between `beforeId`/`afterId` (either may be
+   * `null` for "at the start"/"at the end", §19A.4, Sprint 21). Renormalizes
+   * every sibling in `siblings` to integers and retries once if the gap
+   * between the two anchors has collapsed. Pure — callers own the actual
+   * writes, inside their own transaction.
+   */
+  private reorderPosition(
+    siblings: Array<{ id: string; position: number }>,
+    beforeId: string | null,
+    afterId: string | null,
+  ): { position: number; renumbered: Array<{ id: string; position: number }> | null } {
+    const before = beforeId ? siblings.find((s) => s.id === beforeId) : undefined;
+    const after = afterId ? siblings.find((s) => s.id === afterId) : undefined;
+    if (beforeId && !before) throw new NotFoundException(`Reorder anchor ${beforeId} not found`);
+    if (afterId && !after) throw new NotFoundException(`Reorder anchor ${afterId} not found`);
+
+    const position = fractionalPosition(before?.position ?? null, after?.position ?? null);
+    if (position !== null) return { position, renumbered: null };
+
+    const ordered = [...siblings].sort((a, b) => a.position - b.position);
+    const renumbered = renormalizePositions(ordered);
+    const byId = new Map(renumbered.map((r) => [r.id, r.position]));
+    const retried = fractionalPosition(beforeId ? (byId.get(beforeId) ?? null) : null, afterId ? (byId.get(afterId) ?? null) : null);
+    return { position: retried!, renumbered };
+  }
+
+  /** Drag-drop row reorder (§19A.4, Sprint 21) — used by table/list/gallery row drag and same-column board card drag. */
+  async reorderRow(id: string, beforeId: string | null, afterId: string | null): Promise<DatabaseRow> {
+    const row = await this.ensureRow(id);
+    return this.db.transaction(async (tx) => {
+      const siblings = await tx.select().from(databaseRows).where(eq(databaseRows.databaseId, row.databaseId));
+      const { position, renumbered } = this.reorderPosition(siblings, beforeId, afterId);
+      if (renumbered) {
+        for (const r of renumbered) await tx.update(databaseRows).set({ position: r.position }).where(eq(databaseRows.id, r.id));
+      }
+      const [updated] = await tx.update(databaseRows).set({ position }).where(eq(databaseRows.id, id)).returning();
+      return updated;
+    });
+  }
+
+  /**
+   * A board card dragged into a *different* column: reorder + reassign its
+   * group property in one transaction, so a failure can't leave the row
+   * re-grouped but unordered (or vice versa).
+   */
+  async reorderRowIntoGroup(
+    id: string,
+    groupPropertyId: string,
+    groupValue: unknown,
+    beforeId: string | null,
+    afterId: string | null,
+  ): Promise<DatabaseRow> {
+    const row = await this.ensureRow(id);
+    return this.db.transaction(async (tx) => {
+      const siblings = await tx.select().from(databaseRows).where(eq(databaseRows.databaseId, row.databaseId));
+      const { position, renumbered } = this.reorderPosition(siblings, beforeId, afterId);
+      if (renumbered) {
+        for (const r of renumbered) await tx.update(databaseRows).set({ position: r.position }).where(eq(databaseRows.id, r.id));
+      }
+      const [updated] = await tx
+        .update(databaseRows)
+        .set({ values: { ...row.values, [groupPropertyId]: groupValue }, position, updatedAt: sql`now()` })
+        .where(eq(databaseRows.id, id))
+        .returning();
+      return this.recomputeRowAndDependents(tx, updated);
+    });
+  }
+
+  /** Drag-drop column reorder (§19A.4, Sprint 21). */
+  async reorderProperty(id: string, beforeId: string | null, afterId: string | null): Promise<DatabaseProperty> {
+    const property = await this.ensureProperty(id);
+    return this.db.transaction(async (tx) => {
+      const siblings = await tx
         .select()
         .from(databaseProperties)
-        .where(eq(databaseProperties.databaseId, row.databaseId));
-      const recomputed = await this.formulaRecompute.recomputeRow(tx, row.databaseId, updated, properties);
-
-      // A rollup elsewhere may follow a relation that points at this row
-      // (§24A.5 case 3, §24B.4) — its target value just changed underneath it.
-      const referencingPropertyIds = await tx
-        .selectDistinct({ propertyId: databaseRelationLinks.propertyId })
-        .from(databaseRelationLinks)
-        .where(eq(databaseRelationLinks.toRowId, id));
-      if (referencingPropertyIds.length > 0) {
-        await this.formulaRecompute.recomputeDependents(
-          tx,
-          id,
-          referencingPropertyIds.map((r) => r.propertyId),
-        );
+        .where(eq(databaseProperties.databaseId, property.databaseId));
+      const { position, renumbered } = this.reorderPosition(siblings, beforeId, afterId);
+      if (renumbered) {
+        for (const r of renumbered) {
+          await tx.update(databaseProperties).set({ position: r.position }).where(eq(databaseProperties.id, r.id));
+        }
       }
+      const [updated] = await tx
+        .update(databaseProperties)
+        .set({ position })
+        .where(eq(databaseProperties.id, id))
+        .returning();
+      return updated;
+    });
+  }
 
-      return recomputed;
+  /** Drag-drop view-tab reorder (§19A.4, Sprint 21) — `moveView`'s adjacent-swap stays for the keyboard-accessible "Move left/right" menu items. */
+  async reorderView(id: string, beforeId: string | null, afterId: string | null): Promise<DatabaseView> {
+    const view = await this.ensureView(id);
+    return this.db.transaction(async (tx) => {
+      const siblings = await tx.select().from(databaseViews).where(eq(databaseViews.databaseId, view.databaseId));
+      const { position, renumbered } = this.reorderPosition(siblings, beforeId, afterId);
+      if (renumbered) {
+        for (const r of renumbered) await tx.update(databaseViews).set({ position: r.position }).where(eq(databaseViews.id, r.id));
+      }
+      const [updated] = await tx.update(databaseViews).set({ position }).where(eq(databaseViews.id, id)).returning();
+      return updated;
     });
   }
 

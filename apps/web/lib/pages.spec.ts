@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPageTree, getBreadcrumbTrail, getSubtreeIds } from './pages';
+import { buildPageTree, flattenVisibleIds, getBreadcrumbTrail, getSiblings, getSubtreeIds } from './pages';
 import type { Page } from './types';
 
 function makePage(partial: Partial<Page> & { id: string }): Page {
@@ -83,6 +83,62 @@ describe('getBreadcrumbTrail', () => {
     const a = makePage({ id: 'a', parentPageId: 'b' });
     const b = makePage({ id: 'b', parentPageId: 'a' });
     expect(getBreadcrumbTrail([a, b], 'a').map((p) => p.id)).toEqual(['b', 'a']);
+  });
+});
+
+describe('flattenVisibleIds', () => {
+  it('lists root nodes only when nothing is expanded', () => {
+    const root = makePage({ id: 'root' });
+    const child = makePage({ id: 'child', parentPageId: 'root' });
+    const tree = buildPageTree([root, child]);
+    expect(flattenVisibleIds(tree, [])).toEqual(['root']);
+  });
+
+  it('descends into expanded nodes, root-first and depth-first', () => {
+    const root = makePage({ id: 'root' });
+    const child = makePage({ id: 'child', parentPageId: 'root' });
+    const grandchild = makePage({ id: 'grandchild', parentPageId: 'child' });
+    const sibling = makePage({ id: 'sibling', position: 1 });
+    const tree = buildPageTree([root, child, grandchild, sibling]);
+
+    expect(flattenVisibleIds(tree, ['root', 'child'])).toEqual([
+      'root',
+      'child',
+      'grandchild',
+      'sibling',
+    ]);
+  });
+
+  it('does not descend into a collapsed node even if its child is separately expanded', () => {
+    const root = makePage({ id: 'root' });
+    const child = makePage({ id: 'child', parentPageId: 'root' });
+    const grandchild = makePage({ id: 'grandchild', parentPageId: 'child' });
+    const tree = buildPageTree([root, child, grandchild]);
+
+    expect(flattenVisibleIds(tree, ['child'])).toEqual(['root']);
+  });
+});
+
+describe('getSiblings', () => {
+  it('returns other active pages under the same parent, sorted by position', () => {
+    const root = makePage({ id: 'root' });
+    const a = makePage({ id: 'a', parentPageId: 'root', position: 2 });
+    const b = makePage({ id: 'b', parentPageId: 'root', position: 1 });
+    const other = makePage({ id: 'other' });
+    const all = [root, a, b, other];
+
+    expect(getSiblings(all, a).map((p) => p.id)).toEqual(['b']);
+  });
+
+  it('excludes archived siblings', () => {
+    const a = makePage({ id: 'a', position: 1 });
+    const archived = makePage({ id: 'archived', isArchived: true, position: 2 });
+    expect(getSiblings([a, archived], a)).toEqual([]);
+  });
+
+  it('returns empty for an only child', () => {
+    const only = makePage({ id: 'only' });
+    expect(getSiblings([only], only)).toEqual([]);
   });
 });
 

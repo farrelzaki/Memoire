@@ -13,7 +13,14 @@ describe('Search (e2e)', () => {
 
   const searchService = {
     search: vi.fn(async () => [
-      { type: 'page', pageId: '11111111-1111-1111-1111-111111111111', title: 'Notes' },
+      {
+        type: 'page',
+        pageId: '11111111-1111-1111-1111-111111111111',
+        title: 'Notes',
+        breadcrumb: ['Notes'],
+        snippet: null,
+        rank: 1,
+      },
     ]),
   };
 
@@ -40,8 +47,27 @@ describe('Search (e2e)', () => {
     expect(res.body[0]).toMatchObject({ type: 'page', title: 'Notes' });
   });
 
-  it('GET /api/search without q returns empty', async () => {
-    const res = await request(app.getHttpServer()).get('/api/search').expect(200);
-    expect(res.body).toEqual([]);
+  it('GET /api/search without q rejects with 400', async () => {
+    await request(app.getHttpServer()).get('/api/search').expect(400);
+  });
+
+  it('GET /api/search with an unknown type filter rejects with 400', async () => {
+    await request(app.getHttpServer()).get('/api/search?q=not&type=spreadsheet').expect(400);
+  });
+
+  it('passes mode/type/timeRange/sort/limit through to the service', async () => {
+    await request(app.getHttpServer())
+      .get('/api/search?q=not&mode=quick&type=document&timeRange=7d&sort=updated&limit=5')
+      .expect(200);
+    expect(searchService.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        q: 'not',
+        mode: 'quick',
+        type: 'document',
+        timeRange: '7d',
+        sort: 'updated',
+        limit: 5,
+      }),
+    );
   });
 });

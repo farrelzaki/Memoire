@@ -1,9 +1,14 @@
 'use client';
 
+import { DndContext } from '@dnd-kit/core';
+import { SortableContext, horizontalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '@/lib/api';
+import { toCsvDocument } from '@/lib/csv';
+import { downloadBlob } from '@/lib/download';
 import type {
   CalculationId,
   DatabaseProperty,
@@ -14,11 +19,27 @@ import type {
   ViewConfig,
 } from '@/lib/types';
 import { applyFilter, applySort, mergeRowValues, normalizeViewConfig, type Filter, type Sort } from './database.lib';
-import { BoardView, CalendarView, GalleryView, TableView } from './database-views';
+import { BoardView, CalendarView, GalleryView, ListView, TableView, TimelineView, neighborsAfterDrag, useDragSensors } from './database-views';
 import { PropertyTypeRegistry } from './property-type-registry';
 import { RowPeek } from './row-peek';
 
-type ViewType = 'table' | 'board' | 'calendar' | 'gallery';
+/** A view-tab strip entry that's drag-reorderable (§19A.4, Sprint 21) — listeners span the whole tab, but `useDragSensors`' 8px activation distance means an ordinary click still reaches the inner button/menu normally. */
+function SortableViewTab({ id, children }: { id: string; children: ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      className="group relative flex items-center"
+      {...attributes}
+      {...listeners}
+    >
+      {children}
+    </div>
+  );
+}
+
+type ViewType = 'table' | 'board' | 'calendar' | 'gallery' | 'list' | 'timeline';
 
 /**
  * `pageId` drives the full-page database route (unchanged); `databaseId`
@@ -34,6 +55,7 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
   const [addingView, setAddingView] = useState(false);
   const [peekRow, setPeekRow] = useState<DatabaseRow | null>(null);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const tabDragSensors = useDragSensors();
   // Unsaved edits, previewed via `overrides` (§22A.1) while the debounced
   // PATCH to `database_views.config` is in flight — never held as the
   // source of truth, just a preview layer over `activeView.config`.
@@ -80,6 +102,41 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
 
   const deleteRow = useMutation({
     mutationFn: (id: string) => api.deleteRow(id),
+    onSuccess: invalidate,
+  });
+
+  const reorderRow = useMutation({
+    mutationFn: ({ id, beforeId, afterId }: { id: string; beforeId: string | null; afterId: string | null }) =>
+      api.reorderRow(id, beforeId, afterId),
+    onSuccess: invalidate,
+  });
+
+  const reorderRowIntoGroup = useMutation({
+    mutationFn: ({
+      id,
+      groupPropertyId,
+      groupValue,
+      beforeId,
+      afterId,
+    }: {
+      id: string;
+      groupPropertyId: string;
+      groupValue: unknown;
+      beforeId: string | null;
+      afterId: string | null;
+    }) => api.reorderRowIntoGroup(id, groupPropertyId, groupValue, beforeId, afterId),
+    onSuccess: invalidate,
+  });
+
+  const reorderProperty = useMutation({
+    mutationFn: ({ id, beforeId, afterId }: { id: string; beforeId: string | null; afterId: string | null }) =>
+      api.reorderProperty(id, beforeId, afterId),
+    onSuccess: invalidate,
+  });
+
+  const reorderView = useMutation({
+    mutationFn: ({ id, beforeId, afterId }: { id: string; beforeId: string | null; afterId: string | null }) =>
+      api.reorderView(id, beforeId, afterId),
     onSuccess: invalidate,
   });
 
@@ -189,6 +246,43 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
     updateRow.mutate({ id: row.id, values: mergeRowValues(row, property.id, value) });
   };
 
+  /**
+   * Fetches the view's FULL result set (every page, not just what's loaded
+   * into the infinite-scroll UI) via its own cursor loop — a one-off export
+   * shouldn't reuse/mutate `queryResult`'s cached pages or trigger "Load
+   * more" UI state. Respects the view's own filter/sort/visible-columns
+   * (§30B.2) exactly like the live table does, via the same `POST
+   * /databases/:id/query` this view already reads from.
+   */
+  const exportCsv = async () => {
+    const visibleIds = config.properties.filter((p) => p.visible).map((p) => p.propertyId);
+    const visibleProps = visibleIds
+      .map((id) => properties.find((p) => p.id === id))
+      .filter((p): p is DatabaseProperty => !!p);
+
+    const allRows: DatabaseRow[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await api.queryDatabase(databaseId!, {
+        viewId: activeView.id,
+        overrides: configOverride,
+        cursor,
+        limit: 200,
+      });
+      allRows.push(...page.rows);
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+
+    const headers = visibleProps.map((p) => p.name);
+    const csvRows = allRows.map((row) =>
+      visibleProps.map((p) => PropertyTypeRegistry.get(p.type)?.toCsv(row.values?.[p.id]) ?? ''),
+    );
+    downloadBlob(
+      `${agg.database.name || 'database'} - ${activeView.name}.csv`,
+      new Blob([toCsvDocument(headers, csvRows)], { type: 'text/csv' }),
+    );
+  };
+
   const toggleSort = (propertyId: string) => {
     const current = config.sorts[0];
     if (current?.propertyId === propertyId) {
@@ -205,6 +299,17 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
     config.properties.length > 0
       ? properties.filter((p) => visibleIds.has(p.id))
       : properties;
+  const columnWidths = Object.fromEntries(
+    config.properties.filter((p) => p.width !== undefined).map((p) => [p.propertyId, p.width as number]),
+  );
+  const resizeColumn = (propertyId: string, width: number) => {
+    const next: ViewConfig['properties'] =
+      config.properties.length > 0 ? [...config.properties] : properties.map((p) => ({ propertyId: p.id, visible: true }));
+    const index = next.findIndex((p) => p.propertyId === propertyId);
+    if (index >= 0) next[index] = { ...next[index], width };
+    else next.push({ propertyId, visible: true, width });
+    updateConfig({ properties: next });
+  };
 
   const addView = (type: ViewType) => {
     let viewConfig: Record<string, unknown> | undefined;
@@ -214,6 +319,9 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
     } else if (type === 'calendar') {
       const date = properties.find((p) => p.type === 'date');
       viewConfig = date ? { dateProperty: date.id } : {};
+    } else if (type === 'timeline') {
+      const date = properties.find((p) => p.type === 'date');
+      viewConfig = date ? { startProperty: date.id } : {};
     }
     createView.mutate(
       { name: type.charAt(0).toUpperCase() + type.slice(1), type, config: viewConfig },
@@ -256,20 +364,36 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
         rowHeight={(config.rowHeight as 'short' | 'medium' | 'tall') ?? 'short'}
         wrapCells={Boolean(config.wrapCells)}
         onOpenRow={openRow}
+        onReorderRow={(id, beforeId, afterId) => reorderRow.mutate({ id, beforeId, afterId })}
+        onReorderProperty={(id, beforeId, afterId) => reorderProperty.mutate({ id, beforeId, afterId })}
+        onResizeColumn={resizeColumn}
+        columnWidths={columnWidths}
       />
     );
   } else if (activeView.type === 'board') {
     const groupableProps = properties.filter((p) => p.type === 'select' || p.type === 'status');
     const groupBy = properties.find((p) => p.id === config.groupBy) ?? groupableProps[0];
+    const subGroupBy = groupableProps.find((p) => p.id === config.subGroupBy && p.id !== groupBy?.id);
     content = groupBy ? (
       <BoardView
         properties={visibleProperties}
         rows={rows}
         groupBy={groupBy}
+        subGroupBy={subGroupBy}
         groups={groups}
         commitCell={commitCell}
         createRow={(values) => createRow.mutate({ values })}
         onOpenRow={openRow}
+        collapsedGroups={(config.collapsedGroups as string[]) ?? []}
+        onToggleCollapse={(key) => {
+          const current = (config.collapsedGroups as string[]) ?? [];
+          const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
+          updateConfig({ collapsedGroups: next });
+        }}
+        onReorderRow={(id, beforeId, afterId) => reorderRow.mutate({ id, beforeId, afterId })}
+        onReorderRowIntoGroup={(id, groupPropertyId, groupValue, beforeId, afterId) =>
+          reorderRowIntoGroup.mutate({ id, groupPropertyId, groupValue, beforeId, afterId })
+        }
       />
     ) : (
       <p className="text-zinc-400 dark:text-zinc-500">Add a “select” or “status” property to use the board view.</p>
@@ -277,10 +401,48 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
   } else if (activeView.type === 'calendar') {
     const dateProps = properties.filter((p) => p.type === 'date');
     const dateProperty = properties.find((p) => p.id === config.dateProperty) ?? dateProps[0];
+    const endDateProperty = properties.find((p) => p.id === config.endDateProperty);
     content = dateProperty ? (
-      <CalendarView properties={visibleProperties} rows={rows} dateProperty={dateProperty} />
+      <CalendarView
+        properties={visibleProperties}
+        rows={rows}
+        dateProperty={dateProperty}
+        endDateProperty={endDateProperty}
+        span={(config.span as 'month' | 'week') ?? 'month'}
+        showWeekends={config.showWeekends !== false}
+        commitCell={config.locked ? undefined : commitCell}
+        createRow={config.locked ? undefined : (values) => createRow.mutate({ values })}
+        onChangeSpan={(next) => updateConfig({ span: next })}
+      />
     ) : (
       <p className="text-zinc-400 dark:text-zinc-500">Add a “date” property to use the calendar view.</p>
+    );
+  } else if (activeView.type === 'list') {
+    content = (
+      <ListView
+        properties={visibleProperties}
+        rows={rows}
+        createRow={() => createRow.mutate({})}
+        onOpenRow={openRow}
+        onReorderRow={(id, beforeId, afterId) => reorderRow.mutate({ id, beforeId, afterId })}
+      />
+    );
+  } else if (activeView.type === 'timeline') {
+    const dateProps = properties.filter((p) => p.type === 'date');
+    const startProperty = properties.find((p) => p.id === config.startProperty) ?? dateProps[0];
+    const endProperty = properties.find((p) => p.id === config.endProperty);
+    content = startProperty ? (
+      <TimelineView
+        properties={visibleProperties}
+        rows={rows}
+        startProperty={startProperty}
+        endProperty={endProperty}
+        zoom={(config.zoom as 'day' | 'week' | 'month' | 'quarter' | 'year') ?? 'week'}
+        showTable={config.showTable !== false}
+        onOpenRow={openRow}
+      />
+    ) : (
+      <p className="text-zinc-400 dark:text-zinc-500">Add a “date” property to use the timeline view.</p>
     );
   } else {
     content = (
@@ -289,6 +451,7 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
         rows={rows}
         createRow={() => createRow.mutate({})}
         onOpenRow={openRow}
+        onReorderRow={(id, beforeId, afterId) => reorderRow.mutate({ id, beforeId, afterId })}
       />
     );
   }
@@ -354,10 +517,55 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
         </div>
       )}
 
+      {!config.locked && activeView.type === 'calendar' && (
+        <div className="mb-2 flex items-center gap-3 text-xs text-zinc-500">
+          <label className="flex items-center gap-1">
+            <input
+              type="checkbox"
+              checked={config.showWeekends !== false}
+              onChange={(e) => updateConfig({ showWeekends: e.target.checked })}
+            />
+            Show weekends
+          </label>
+        </div>
+      )}
+
+      {!config.locked && activeView.type === 'board' && (
+        <div className="mb-2 flex items-center gap-3 text-xs text-zinc-500">
+          <label className="flex items-center gap-1">
+            Sub-group by
+            <select
+              value={(config.subGroupBy as string) ?? ''}
+              onChange={(e) => updateConfig({ subGroupBy: e.target.value || undefined })}
+              className="rounded border border-zinc-200 bg-transparent px-1 py-0.5 dark:border-zinc-700"
+            >
+              <option value="">None</option>
+              {properties
+                .filter((p) => (p.type === 'select' || p.type === 'status') && p.id !== config.groupBy)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </div>
+      )}
+
       {/* View switcher */}
+      <DndContext
+        sensors={tabDragSensors}
+        onDragEnd={(e) => {
+          if (!e.over || e.active.id === e.over.id) return;
+          const viewIds = agg.views.map((v) => v.id);
+          const { beforeId, afterId } = neighborsAfterDrag(viewIds, String(e.active.id), String(e.over.id));
+          reorderView.mutate({ id: String(e.active.id), beforeId, afterId });
+        }}
+      >
+      <SortableContext items={agg.views.map((v) => v.id)} strategy={horizontalListSortingStrategy}>
       <div className="mb-2 flex items-center gap-1 border-b border-zinc-200 dark:border-zinc-800">
         {agg.views.map((view) => (
-          <div key={view.id} className="group relative flex items-center">
+          <SortableViewTab key={view.id} id={view.id}>
             <button
               onClick={() => setActiveViewId(view.id)}
               className={`px-2 py-1.5 text-sm ${
@@ -410,6 +618,15 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
                 >
                   {config.locked ? 'Unlock view' : 'Lock view'}
                 </button>
+                <button
+                  onClick={() => {
+                    setViewMenuOpen(false);
+                    void exportCsv();
+                  }}
+                  className="block w-full rounded px-2 py-1 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  Export CSV
+                </button>
                 {agg.views.length > 1 && (
                   <button
                     onClick={() => {
@@ -423,7 +640,7 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
                 )}
               </div>
             )}
-          </div>
+          </SortableViewTab>
         ))}
         <div className="relative ml-1">
           <button
@@ -434,7 +651,7 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
           </button>
           {addingView && (
             <div className="absolute left-0 top-8 z-50 w-32 rounded border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-              {(['table', 'board', 'calendar', 'gallery'] as const).map((type) => (
+              {(['table', 'board', 'calendar', 'gallery', 'list', 'timeline'] as const).map((type) => (
                 <button
                   key={type}
                   onClick={() => addView(type)}
@@ -447,6 +664,8 @@ export function DatabaseEditor({ pageId, databaseId: databaseIdProp }: { pageId?
           )}
         </div>
       </div>
+      </SortableContext>
+      </DndContext>
 
       {content}
 

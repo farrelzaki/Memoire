@@ -60,9 +60,12 @@ export function KeyboardShortcuts() {
     const onKey = (event: KeyboardEvent) => {
       if (event.ctrlKey || event.metaKey) {
         const key = event.key.toLowerCase();
-        if (key === 'k' || key === 'p') {
+        if (key === 'k') {
           event.preventDefault();
-          setOpen(true);
+          setOpen(true, 'command');
+        } else if (key === 'p') {
+          event.preventDefault();
+          setOpen(true, 'switcher');
         } else if (key === 'n') {
           event.preventDefault();
           createPage.mutate({});

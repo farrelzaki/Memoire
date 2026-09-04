@@ -1,0 +1,1 @@
+ALTER TABLE "pages" ALTER COLUMN "position" SET DATA TYPE double precision;

@@ -1,13 +1,16 @@
 import {
   BadRequestException,
+  forwardRef,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { fractionalPosition, renormalizePositions } from '@memoire/validation';
 import { DatabasesService } from '../databases/databases.service';
 import { DRIZZLE_DB, DrizzleDB, DrizzleTx } from '../db/drizzle.provider';
 import { blocks, databaseProperties, databaseRows, Page, pageCanvases, PageType, pages } from '../db/schema';
+import { VersionsService } from '../versions/versions.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 export type CreatePageInput = {
@@ -33,6 +36,7 @@ export class PagesService {
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDB,
     private readonly workspacesService: WorkspacesService,
     private readonly databasesService: DatabasesService,
+    @Inject(forwardRef(() => VersionsService)) private readonly versionsService: VersionsService,
   ) {}
 
   async create(data: CreatePageInput): Promise<Page> {
@@ -115,6 +119,21 @@ export class PagesService {
         }
       }
 
+      if (data.title !== undefined || data.icon !== undefined) {
+        const currentBlocks = await tx
+          .select()
+          .from(blocks)
+          .where(eq(blocks.pageId, id))
+          .orderBy(sql`${blocks.position} asc`);
+        await this.versionsService.autoSnapshotIfDue(
+          tx,
+          id,
+          page.title,
+          page.icon,
+          currentBlocks.map((b) => ({ id: b.id, type: b.type, content: b.content, position: b.position })),
+        );
+      }
+
       return page;
     });
   }
@@ -129,21 +148,39 @@ export class PagesService {
   }
 
   private async setArchived(id: string, isArchived: boolean): Promise<Page> {
-    const existing = await this.findOne(id);
     return this.db.transaction(async (tx) => {
       const [page] = await tx
         .update(pages)
         .set({ isArchived, updatedAt: sql`now()` })
         .where(eq(pages.id, id))
         .returning();
-      if (existing.databaseId) {
-        await tx
-          .update(databaseRows)
-          .set({ isArchived, updatedAt: sql`now()` })
-          .where(eq(databaseRows.pageId, id));
-      }
+      await this.cascadeArchive(tx, id, isArchived);
       return page;
     });
+  }
+
+  /**
+   * Recurses into every child page and mirrors onto each one's databaseRows
+   * row if it has one (§20D.5). Archive and restore both cascade
+   * unconditionally regardless of a child's current isArchived state —
+   * restoring a page also restores every currently-archived descendant,
+   * matching Notion's real UX (ADR-26). Without this, a child of an archived
+   * page becomes unreachable from the sidebar (parent gone) without ever
+   * appearing in Trash either (§32) — a dangling orphan state.
+   */
+  private async cascadeArchive(tx: DrizzleTx, id: string, isArchived: boolean): Promise<void> {
+    const [page] = await tx.select({ databaseId: pages.databaseId }).from(pages).where(eq(pages.id, id));
+    if (page?.databaseId) {
+      await tx
+        .update(databaseRows)
+        .set({ isArchived, updatedAt: sql`now()` })
+        .where(eq(databaseRows.pageId, id));
+    }
+    const children = await tx.select({ id: pages.id }).from(pages).where(eq(pages.parentPageId, id));
+    for (const child of children) {
+      await tx.update(pages).set({ isArchived, updatedAt: sql`now()` }).where(eq(pages.id, child.id));
+      await this.cascadeArchive(tx, child.id, isArchived);
+    }
   }
 
   /**
@@ -252,26 +289,46 @@ export class PagesService {
     }
 
     await this.db.transaction(async (tx) => {
-      await this.deletePageTree(tx, id);
+      const ids = await this.collectSubtreeIds(tx, id);
+      // databaseRows.pageId -> pages.id is ON DELETE no action (unlike
+      // databases.ownerPageId / databaseRows.databaseId, which cascade) — a
+      // row-detail page must not be deleted while a database_rows still
+      // points at it, or Postgres rejects the DELETE. Null the refs first,
+      // then delete deepest-first; deleting the owner page cascades away the
+      // databases/database_rows rows on its own, no explicit delete needed.
+      await tx.update(databaseRows).set({ pageId: null }).where(inArray(databaseRows.pageId, ids));
+      for (const pid of [...ids].reverse()) {
+        await tx.delete(pages).where(eq(pages.id, pid));
+      }
     });
     return { id, deleted: true };
   }
 
-  private async deletePageTree(tx: DrizzleTx, id: string): Promise<void> {
-    const children = await tx
-      .select({ id: pages.id })
-      .from(pages)
-      .where(eq(pages.parentPageId, id));
-    for (const child of children) {
-      await this.deletePageTree(tx, child.id);
+  /** BFS-collects `rootId` and every descendant id, root first. */
+  private async collectSubtreeIds(tx: DrizzleTx, rootId: string): Promise<string[]> {
+    const ids = [rootId];
+    let frontier = [rootId];
+    while (frontier.length > 0) {
+      const children = await tx.select({ id: pages.id }).from(pages).where(inArray(pages.parentPageId, frontier));
+      frontier = children.map((c) => c.id);
+      ids.push(...frontier);
     }
-    await tx.delete(pages).where(eq(pages.id, id));
+    return ids;
   }
 
+  /**
+   * Drag-drop reorder + reparent (§19A.4, Sprint 22) in one transaction —
+   * `beforeId`/`afterId` (siblings under the *target* parent) resolve to a
+   * fractional position server-side, mirroring `DatabasesService`'s
+   * `reorderRow`/`reorderProperty`/`reorderView` (Sprint 21). Omitting both
+   * appends at the end, so the non-drag "Move to…" menu path (which doesn't
+   * know a specific sibling position) doesn't have to supply anchors.
+   */
   async move(
     id: string,
     parentPageId?: string | null,
-    position?: number,
+    beforeId?: string | null,
+    afterId?: string | null,
   ): Promise<Page> {
     const page = await this.findOne(id);
     const newParentId = parentPageId === undefined ? page.parentPageId : parentPageId;
@@ -286,17 +343,63 @@ export class PagesService {
       }
     }
 
-    const nextPosition = position ?? (await this.nextPosition(newParentId ?? null));
-    const [moved] = await this.db
-      .update(pages)
-      .set({
-        parentPageId: newParentId ?? null,
-        position: nextPosition,
-        updatedAt: sql`now()`,
-      })
-      .where(eq(pages.id, id))
-      .returning();
-    return moved;
+    return this.db.transaction(async (tx) => {
+      let position: number;
+      if (beforeId === undefined && afterId === undefined) {
+        position = await this.nextPosition(newParentId ?? null, tx);
+      } else {
+        const siblings = await tx
+          .select({ id: pages.id, position: pages.position })
+          .from(pages)
+          .where(newParentId === null ? isNull(pages.parentPageId) : eq(pages.parentPageId, newParentId));
+        const resolved = this.reorderPosition(siblings, beforeId ?? null, afterId ?? null);
+        if (resolved.renumbered) {
+          for (const r of resolved.renumbered) {
+            await tx.update(pages).set({ position: r.position }).where(eq(pages.id, r.id));
+          }
+        }
+        position = resolved.position;
+      }
+
+      const [moved] = await tx
+        .update(pages)
+        .set({
+          parentPageId: newParentId ?? null,
+          position,
+          updatedAt: sql`now()`,
+        })
+        .where(eq(pages.id, id))
+        .returning();
+      return moved;
+    });
+  }
+
+  /**
+   * Position for an item dropped between `beforeId`/`afterId` (either may be
+   * `null` for "at the start"/"at the end", §19A.4). Renormalizes every
+   * sibling in `siblings` to integers and retries once if the gap between the
+   * two anchors has collapsed. Pure — callers own the actual writes, inside
+   * their own transaction. Mirrors `DatabasesService#reorderPosition`
+   * (Sprint 21) exactly.
+   */
+  private reorderPosition(
+    siblings: Array<{ id: string; position: number }>,
+    beforeId: string | null,
+    afterId: string | null,
+  ): { position: number; renumbered: Array<{ id: string; position: number }> | null } {
+    const before = beforeId ? siblings.find((s) => s.id === beforeId) : undefined;
+    const after = afterId ? siblings.find((s) => s.id === afterId) : undefined;
+    if (beforeId && !before) throw new NotFoundException(`Reorder anchor ${beforeId} not found`);
+    if (afterId && !after) throw new NotFoundException(`Reorder anchor ${afterId} not found`);
+
+    const position = fractionalPosition(before?.position ?? null, after?.position ?? null);
+    if (position !== null) return { position, renumbered: null };
+
+    const ordered = [...siblings].sort((a, b) => a.position - b.position);
+    const renumbered = renormalizePositions(ordered);
+    const byId = new Map(renumbered.map((r) => [r.id, r.position]));
+    const retried = fractionalPosition(beforeId ? (byId.get(beforeId) ?? null) : null, afterId ? (byId.get(afterId) ?? null) : null);
+    return { position: retried!, renumbered };
   }
 
   /** Next sibling position for a parent (root when `parentId` is null). */

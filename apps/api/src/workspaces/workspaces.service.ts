@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE_DB, DrizzleDB } from '../db/drizzle.provider';
 import { Workspace, workspaces } from '../db/schema';
 
@@ -19,5 +20,16 @@ export class WorkspacesService {
       .values({ name: 'Memoire' })
       .returning();
     return created;
+  }
+
+  /** Merges into the one workspace's `settings` JSONB (§57 Decision 3, mirrors `pages.settings`). */
+  async updateSettings(patch: Record<string, unknown>): Promise<Workspace> {
+    const workspace = await this.getOrCreateDefault();
+    const [updated] = await this.db
+      .update(workspaces)
+      .set({ settings: { ...workspace.settings, ...patch }, updatedAt: sql`now()` })
+      .where(eq(workspaces.id, workspace.id))
+      .returning();
+    return updated;
   }
 }

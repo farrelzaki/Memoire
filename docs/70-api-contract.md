@@ -140,8 +140,23 @@ POST   /pages/:id/canvas/export     -- PNG/SVG
 ## Search
 
 ```http
-GET /search?q=...
+GET /search?q=...&mode=quick|full&type=document|database|whiteboard|diagram&timeRange=7d|30d|year&locationPageId=<uuid>&sort=relevance|updated&limit=1..50
 ```
+
+Validasi lewat `@memoire/validation`'s `searchQuerySchema` — sumber kebenaran tunggal untuk bentuk
+request. `q` wajib (min 1 karakter, max 200); field lain punya default (`mode=full`,
+`sort=relevance`, `limit=20`). `mode` eksplisit dari pemanggil, bukan diturunkan dari panjang
+kueri — `quick` untuk command palette/quick switcher (prefix match sambil mengetik), `full` untuk
+halaman `/search` (kueri final, `websearch_to_tsquery`, mendukung frasa & `-pengecualian`).
+
+Respons: `SearchHit[]` (`searchHitSchema`, `packages/validation/src/search.ts`):
+
+```ts
+{ type: 'page' | 'block' | 'database' | 'row', pageId, blockId?, rowId?, databaseId?,
+  title, breadcrumb: string[], snippet: string | null, rank: number }
+```
+
+Lihat §25A untuk desain lengkap (generated `search_vector` columns, ranking, cuplikan).
 
 ## Attachments
 
@@ -150,6 +165,50 @@ POST   /attachments/upload
 GET    /attachments/:id
 DELETE /attachments/:id
 ```
+
+## Import (§30A, Sprint 24 + 24B)
+
+Empat format: Markdown (.md atau .zip berisi banyak .md), `memoire.json`, CSV (satu database),
+Notion export .zip. Selalu dua langkah: preview lalu confirm, satu transaksi.
+
+```http
+POST   /import/preview
+  multipart/form-data: file, kind ('markdown' | 'memoire-json' | 'csv' | 'notion-zip')
+  -> 201 { stagingId, summary, warnings: string[] }
+     summary (markdown/notion-zip): { pageCount, imageCount, importParentTitle }
+       + databaseCount untuk notion-zip
+     summary (csv): { databaseName, rowCount, importParentTitle,
+                       columns: { name, type }[] }  -- type adalah tebakan
+
+PATCH  /import/:stagingId
+  body: { columnTypes: Record<number, PropertyType> }   -- CSV saja; kolom 0 (title) terkunci
+  -> 200 { summary }   -- summary.columns memantulkan koreksi
+
+POST   /import/:stagingId/confirm
+  -> 201 { importParentPageId, pageCount, warnings: string[] }
+
+DELETE /import/:stagingId
+```
+
+Validasi lewat `@memoire/validation`'s `memoireExportSchema` untuk kind `memoire-json`. Gambar
+jarak jauh di Markdown/Notion-zip diunduh lewat penjaga SSRF yang sama dengan link preview
+(§29A.1), tidak diimplementasikan ulang. Tipe kolom CSV yang diterima lewat `PATCH` dibatasi ke
+`title | text | number | date | checkbox` — tipe lain butuh config yang tidak bisa disuplai sel
+CSV, ditolak dengan 400.
+
+## Backup (§31, Sprint 24)
+
+Isi arsip: `memoire.json` (bentuk yang sama dengan `GET /export/json`) + `attachments/` — bukan
+render lewat registry, jadi murni server-side termasuk dari `@Cron` (lihat ADR-25).
+
+```http
+POST /backup/run                    -- pemicu manual, sama seperti tik cron harian
+GET  /backup                        -- daftar backup lokal (filename, createdAt, size)
+GET  /backup/:filename/download
+```
+
+Restore memakai ulang `POST /import/preview` dengan `kind: 'memoire-json'` — tidak ada endpoint
+restore terpisah. Retensi: 7 backup terbaru disimpan di `BACKUP_DIR`, sisanya dihapus otomatis.
 
 ---
 
@@ -171,10 +230,13 @@ POST   /pages/:id/move
 DELETE /pages/:id
 DELETE /pages/:id/permanent
 GET    /pages/:id/backlinks          -- BARU §15A
-GET    /pages/:id/versions           -- BARU §33A
-GET    /pages/:id/versions/:vid
-POST   /pages/:id/versions           -- BARU, simpan versi manual
-POST   /pages/:id/versions/:vid/restore  -- BARU
+GET    /pages/:id/versions           -- §33A, Sprint 25 -- daftar versi (tanpa content)
+POST   /pages/:id/versions           -- simpan versi manual (kind='manual')
+
+Versions (§33A, Sprint 25)
+GET    /versions/:id                 -- content penuh, resolusi storage_key transparan
+GET    /versions/diff?from=:id&to=:id
+POST   /versions/:id/restore         -- §33A.6, tidak pernah merusak
 
 Blocks
 GET    /pages/:pageId/blocks
@@ -241,6 +303,8 @@ DELETE /reminders/:id                -- BARU
 Settings
 GET    /settings                     -- BARU §35A
 PATCH  /settings                     -- BARU
+GET    /workspace                    -- Sprint 25, workspaces.settings mentah (versionRetentionDays, §33A.3)
+PATCH  /workspace                    -- body { settings: {...} }, merge ke workspaces.settings
 
 Portability
 GET    /export/json

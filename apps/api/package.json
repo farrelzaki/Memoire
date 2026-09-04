@@ -28,6 +28,7 @@
     "@nestjs/schedule": "^12.0.1",
     "drizzle-orm": "^0.38.0",
     "express": "^5.0.0",
+    "fflate": "^0.8.3",
     "multer": "^2.0.0",
     "pg": "^8.13.0",
     "reflect-metadata": "^0.2.2",

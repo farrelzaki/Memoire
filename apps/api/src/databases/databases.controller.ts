@@ -8,7 +8,16 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { AddRelationDto, addRelationSchema, DatabaseQueryRequestDto, databaseQueryRequestSchema } from '@memoire/validation';
+import {
+  AddRelationDto,
+  addRelationSchema,
+  DatabaseQueryRequestDto,
+  databaseQueryRequestSchema,
+  ReorderDto,
+  reorderSchema,
+  ReorderIntoGroupDto,
+  reorderIntoGroupSchema,
+} from '@memoire/validation';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { DatabaseQueryService } from './database-query.service';
 import {
@@ -93,6 +102,15 @@ export class DatabasesController {
     return this.databasesService.deleteProperty(id);
   }
 
+  /** Drag-drop column reorder (§19A.4, Sprint 21). */
+  @Post('database-properties/:id/reorder')
+  reorderProperty(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(reorderSchema)) body: ReorderDto,
+  ) {
+    return this.databasesService.reorderProperty(id, body.beforeId, body.afterId);
+  }
+
   @Post('databases/:id/rows')
   createRow(
     @Param('id', ParseUUIDPipe) id: string,
@@ -143,6 +161,24 @@ export class DatabasesController {
     return this.databasesService.removeRelation(id, propertyId, toRowId);
   }
 
+  /** Drag-drop row reorder (§19A.4, Sprint 21). */
+  @Post('database-rows/:id/reorder')
+  reorderRow(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(reorderSchema)) body: ReorderDto,
+  ) {
+    return this.databasesService.reorderRow(id, body.beforeId, body.afterId);
+  }
+
+  /** A board card dragged into a different column — reorder + regroup in one call. */
+  @Post('database-rows/:id/reorder-into-group')
+  reorderRowIntoGroup(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(reorderIntoGroupSchema)) body: ReorderIntoGroupDto,
+  ) {
+    return this.databasesService.reorderRowIntoGroup(id, body.groupPropertyId, body.groupValue, body.beforeId, body.afterId);
+  }
+
   @Post('databases/:id/views')
   createView(
     @Param('id', ParseUUIDPipe) id: string,
@@ -172,12 +208,21 @@ export class DatabasesController {
     return this.databasesService.duplicateView(id);
   }
 
-  /** Swaps position with the adjacent tab — pointer-drag reordering is Sprint 21. */
+  /** Swaps position with the adjacent tab — keyboard-accessible alternative to drag. */
   @Post('database-views/:id/move')
   moveView(
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(moveViewSchema)) body: MoveViewDto,
   ) {
     return this.databasesService.moveView(id, body.direction);
+  }
+
+  /** Drag-drop tab reorder (§19A.4, Sprint 21). */
+  @Post('database-views/:id/reorder')
+  reorderView(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(reorderSchema)) body: ReorderDto,
+  ) {
+    return this.databasesService.reorderView(id, body.beforeId, body.afterId);
   }
 }

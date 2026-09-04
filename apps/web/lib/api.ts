@@ -1,3 +1,4 @@
+import type { MemoireExport } from '@memoire/validation';
 import type { BlockPayload } from './blocks';
 import { offlineDb, STORES } from './offline-db';
 import { queueMutation } from './offline-sync';
@@ -20,6 +21,10 @@ import type {
   PropertyType,
   RowTemplate,
   SearchHit,
+  SearchQueryParams,
+  VersionDiffResult,
+  VersionFullContent,
+  VersionSummary,
   ViewConfig,
 } from './types';
 
@@ -134,9 +139,10 @@ export const api = {
     request<{ id: string; deleted: boolean }>(`/pages/${id}/permanent`, {
       method: 'DELETE',
     }),
+  /** Drag-drop reorder + reparent (§19A.4, Sprint 22). Omitting beforeId/afterId appends. */
   movePage: (
     id: string,
-    body: { parentPageId?: string | null; position?: number },
+    body: { parentPageId?: string | null; beforeId?: string | null; afterId?: string | null },
   ) => request<Page>(`/pages/${id}/move`, { method: 'POST', body: JSON.stringify(body) }),
   getBacklinks: (id: string) => request<Backlink[]>(`/pages/${id}/backlinks`),
 
@@ -164,6 +170,36 @@ export const api = {
       },
     );
   },
+
+  previewImport: (
+    file: File,
+    kind: 'markdown' | 'memoire-json' | 'csv' | 'notion-zip',
+  ): Promise<{ stagingId: string; summary: Record<string, unknown>; warnings: string[] }> => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('kind', kind);
+    return fetch(`${API_BASE}/import/preview`, { method: 'POST', body: form }).then(async (res) => {
+      if (!res.ok) throw new Error(`Import preview failed (${res.status})`);
+      return res.json();
+    });
+  },
+  /** CSV import only (§30A.1) — corrects one or more guessed column types before confirm. */
+  updateImportColumnTypes: (stagingId: string, columnTypes: Record<number, string>) =>
+    request<{ summary: Record<string, unknown> }>(`/import/${stagingId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ columnTypes }),
+    }),
+  confirmImport: (stagingId: string) =>
+    request<{ importParentPageId: string; pageCount: number; warnings: string[] }>(
+      `/import/${stagingId}/confirm`,
+      { method: 'POST' },
+    ),
+  cancelImport: (stagingId: string) =>
+    request<{ success: boolean }>(`/import/${stagingId}`, { method: 'DELETE' }),
+
+  runBackup: () => request<{ filename: string; createdAt: string; size: number }>('/backup/run', { method: 'POST' }),
+  listBackups: () => request<Array<{ filename: string; createdAt: string; size: number }>>('/backup'),
+  backupDownloadUrl: (filename: string) => `${API_BASE}/backup/${filename}/download`,
 
   getDatabase: (pageId: string) =>
     request<DatabaseAggregate>(`/databases/by-page/${pageId}`),
@@ -215,6 +251,34 @@ export const api = {
     request<{ linked: boolean }>(`/database-rows/${rowId}/relations/${propertyId}/${toRowId}`, {
       method: 'DELETE',
     }),
+  /** Drag-drop reorder (§19A.4, Sprint 21) — either id may be `null` for "at the start"/"at the end". */
+  reorderRow: (id: string, beforeId: string | null, afterId: string | null) =>
+    request<DatabaseRow>(`/database-rows/${id}/reorder`, {
+      method: 'POST',
+      body: JSON.stringify({ beforeId, afterId }),
+    }),
+  /** A board card dragged into a different column — reorder + regroup in one call. */
+  reorderRowIntoGroup: (
+    id: string,
+    groupPropertyId: string,
+    groupValue: unknown,
+    beforeId: string | null,
+    afterId: string | null,
+  ) =>
+    request<DatabaseRow>(`/database-rows/${id}/reorder-into-group`, {
+      method: 'POST',
+      body: JSON.stringify({ groupPropertyId, groupValue, beforeId, afterId }),
+    }),
+  reorderProperty: (id: string, beforeId: string | null, afterId: string | null) =>
+    request<DatabaseProperty>(`/database-properties/${id}/reorder`, {
+      method: 'POST',
+      body: JSON.stringify({ beforeId, afterId }),
+    }),
+  reorderView: (id: string, beforeId: string | null, afterId: string | null) =>
+    request<DatabaseView>(`/database-views/${id}/reorder`, {
+      method: 'POST',
+      body: JSON.stringify({ beforeId, afterId }),
+    }),
   listTemplates: (databaseId: string) => request<RowTemplate[]>(`/databases/${databaseId}/templates`),
   createTemplate: (databaseId: string, body: { name: string; icon?: string | null; content: Record<string, unknown> }) =>
     request<RowTemplate>(`/databases/${databaseId}/templates`, {
@@ -254,13 +318,38 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  search: (q: string) => request<SearchHit[]>(`/search?q=${encodeURIComponent(q)}`),
-  exportWorkspace: () => request<Record<string, unknown>>('/export/json'),
+  search: (q: string, params: SearchQueryParams = {}) => {
+    const qs = new URLSearchParams({ q });
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined) qs.set(key, String(value));
+    }
+    return request<SearchHit[]>(`/search?${qs.toString()}`);
+  },
+  exportWorkspace: () => request<MemoireExport>('/export/json'),
 
   getCanvas: (pageId: string) => request<CanvasData>(`/pages/${pageId}/canvas`),
   updateCanvas: (pageId: string, body: { elements?: unknown[]; viewport?: Record<string, unknown> }) =>
     request<CanvasData>(`/pages/${pageId}/canvas`, {
       method: 'PATCH',
       body: JSON.stringify(body),
+    }),
+
+  // Version history (§33A, Sprint 25).
+  listVersions: (pageId: string) => request<VersionSummary[]>(`/pages/${pageId}/versions`),
+  saveVersion: (pageId: string, label?: string) =>
+    request<VersionSummary>(`/pages/${pageId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({ label }),
+    }),
+  getVersion: (id: string) => request<VersionFullContent>(`/versions/${id}`),
+  diffVersions: (from: string, to: string) =>
+    request<VersionDiffResult>(`/versions/diff?from=${from}&to=${to}`),
+  restoreVersion: (id: string) => request<Page>(`/versions/${id}/restore`, { method: 'POST' }),
+
+  getWorkspace: () => request<{ id: string; settings: Record<string, unknown> }>('/workspace'),
+  updateWorkspaceSettings: (settings: Record<string, unknown>) =>
+    request<{ id: string; settings: Record<string, unknown> }>('/workspace', {
+      method: 'PATCH',
+      body: JSON.stringify({ settings }),
     }),
 };

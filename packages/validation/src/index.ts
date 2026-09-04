@@ -5,3 +5,7 @@ export * from './database';
 export * from './link-preview';
 export * from './view-config';
 export * from './template';
+export * from './position';
+export * from './search';
+export * from './export';
+export * from './version';

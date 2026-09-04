@@ -73,7 +73,7 @@ export class PagesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(movePageSchema)) body: MovePageDto,
   ) {
-    return this.pagesService.move(id, body.parentPageId, body.position);
+    return this.pagesService.move(id, body.parentPageId, body.beforeId, body.afterId);
   }
 
   /** Soft delete (§32) — same effect as `archive`, kept for REST completeness. */

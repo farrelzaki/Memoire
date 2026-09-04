@@ -117,4 +117,30 @@ describe('migrateViewConfig', () => {
     const config = migrateViewConfig({ version: 1, dateProperty: P1 }, 'calendar', [{ id: P1 }]);
     expect(config).toMatchObject({ dateProperty: P1, span: 'month', showWeekends: true });
   });
+
+  it('produces the list-specific shape (base only, §21B.1)', () => {
+    const config = migrateViewConfig({ version: 1 }, 'list', [{ id: P1 }]);
+    expect(config.version).toBe(1);
+    expect(config).not.toHaveProperty('groupBy');
+    expect(config).not.toHaveProperty('startProperty');
+  });
+
+  it('produces the timeline-specific shape and defaults zoom/showTable', () => {
+    const config = migrateViewConfig({ version: 1, startProperty: P1 }, 'timeline', [{ id: P1 }]);
+    expect(config).toMatchObject({ startProperty: P1, zoom: 'week', showTable: true });
+  });
+
+  it('drops a timeline startProperty/endProperty referencing a deleted property', () => {
+    const config = migrateViewConfig({ version: 1, startProperty: GHOST, endProperty: GHOST }, 'timeline', [{ id: P1 }]);
+    expect('startProperty' in config).toBe(false);
+    expect('endProperty' in config).toBe(false);
+  });
+
+  it('board collapsedGroups defaults to an empty array and survives migration', () => {
+    const config = migrateViewConfig({ version: 1, groupBy: P1 }, 'board', [{ id: P1 }]);
+    expect(config).toMatchObject({ collapsedGroups: [] });
+
+    const withCollapsed = migrateViewConfig({ version: 1, groupBy: P1, collapsedGroups: ['opt-a'] }, 'board', [{ id: P1 }]);
+    expect(withCollapsed.collapsedGroups).toEqual(['opt-a']);
+  });
 });

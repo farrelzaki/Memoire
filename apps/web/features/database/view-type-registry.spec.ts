@@ -7,7 +7,9 @@ describe('ViewTypeRegistry', () => {
       'board',
       'calendar',
       'gallery',
+      'list',
       'table',
+      'timeline',
     ]);
   });
 
@@ -18,9 +20,11 @@ describe('ViewTypeRegistry', () => {
     }
   });
 
-  it('calendar requires a date property, table requires none', () => {
+  it('calendar and timeline require a date property, table and list require none', () => {
     expect(ViewTypeRegistry.get('calendar')!.requiredProperties).toEqual(['date']);
+    expect(ViewTypeRegistry.get('timeline')!.requiredProperties).toEqual(['date']);
     expect(ViewTypeRegistry.get('table')!.requiredProperties).toEqual([]);
+    expect(ViewTypeRegistry.get('list')!.requiredProperties).toEqual([]);
   });
 
   it('board and table both support grouping (table ber-grup, §21A.1), calendar does not', () => {

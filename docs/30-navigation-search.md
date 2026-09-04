@@ -220,10 +220,10 @@ Untuk aplikasi personal, kemungkinan PostgreSQL saja sudah cukup lama.
 
 # 25A. Desain Full-Text Search
 
-§25 merencanakan Postgres FTS. Yang terbangun adalah `ILIKE '%q%'` atas `content::text`. Itu punya
-tiga masalah yang langsung terasa: ia mencocokkan **kunci** JSON dan nama tipe (mencari
-"paragraph" mengembalikan hampir setiap halaman), ia tidak bisa memberi peringkat, dan ia memindai
-seluruh tabel.
+**Status: terbangun (Sprint 23).** §25 merencanakan Postgres FTS untuk menggantikan `ILIKE '%q%'`
+atas `content::text`, yang punya tiga masalah: ia mencocokkan **kunci** JSON dan nama tipe
+(mencari "paragraph" mengembalikan hampir setiap halaman), ia tidak bisa memberi peringkat, dan ia
+memindai seluruh tabel. Ketiganya sudah diperbaiki.
 
 ## 25A.1 Generated column, bukan trigger
 
@@ -236,10 +236,16 @@ alter table pages add column search_vector tsvector
   generated always as (setweight(to_tsvector('simple', coalesce(title,'')), 'A')) stored;
 create index pages_fts_idx on pages using gin (search_vector);
 
+-- blocks: dibatasi ke kunci literal `text` (field teks Tiptap sendiri), BUKAN
+-- '["string"]' atas seluruh pohon — lihat ADR-24 untuk kenapa itu ternyata
+-- belum cukup (nilai string dari kunci `type` Tiptap sendiri, mis.
+-- "paragraph", tetap ikut terindeks oleh filter '["string"]' polos).
 alter table blocks add column search_vector tsvector
-  generated always as (jsonb_to_tsvector('simple', coalesce(content,'{}'::jsonb), '["string"]')) stored;
+  generated always as (to_tsvector('simple', jsonb_path_query_array(content, '$.**.text')::text)) stored;
 create index blocks_fts_idx on blocks using gin (search_vector);
 
+-- database_rows: dikunci oleh id properti, bukan struktur type/text Tiptap —
+-- '["string"]' polos sudah benar di sini, tidak kena bug yang sama (§ADR-24).
 alter table database_rows add column search_vector tsvector
   generated always as (jsonb_to_tsvector('simple', coalesce(values,'{}'::jsonb), '["string"]')) stored;
 create index database_rows_fts_idx on database_rows using gin (search_vector);
@@ -247,9 +253,6 @@ create index database_rows_fts_idx on database_rows using gin (search_vector);
 create extension if not exists pg_trgm;
 create index pages_title_trgm on pages using gin (title gin_trgm_ops);
 ```
-
-`'["string"]'` mengindeks **hanya nilai string**, bukan kunci — ini sendirian yang memperbaiki bug
-"cari `paragraph`, dapat semua halaman".
 
 ## 25A.2 Kenapa `'simple'`, bukan `'english'`
 
@@ -277,7 +280,9 @@ ts_rank_cd(search_vector, query)
   x peluruhan recency berdasarkan updated_at
 ```
 
-Satu `ORDER BY` di atas `UNION ALL` dari tiga sumber.
+Satu `ORDER BY` di atas `UNION ALL` dari empat sumber (pages, blocks, database_rows, databases —
+lihat `apps/api/src/search/search.service.ts`). Peluruhan recency pakai half-life 30 hari
+(`RECENCY_HALF_LIFE_SECONDS`, ADR-24 — angka konkret yang tidak disebutkan di sini sebelumnya).
 
 ## 25A.5 Bentuk hasil
 
@@ -285,24 +290,35 @@ Satu `ORDER BY` di atas `UNION ALL` dari tiga sumber.
 { type, pageId, blockId?, rowId?, databaseId?, title, breadcrumb, snippet, rank }
 ```
 
-`blockId` bermakna **hanya karena §11E**: tanpa id blok yang stabil, tautan "lompat ke bagian ini"
-akan menunjuk blok yang sudah tidak ada. Search-ke-anchor adalah dependensi langsung identitas blok.
+Skema bersama di `@memoire/validation`'s `searchHitSchema`/`searchQuerySchema`
+(`packages/validation/src/search.ts`), dipakai kedua sisi (§10B invariant #11).
 
-Cuplikan dibuat dengan `ts_headline` atas teks polos hasil `toPlainText` dari
-`BlockTypeRegistry` (§11D.2) — serializer yang sama dengan eksportir Markdown. Satu implementasi,
-sehingga cuplikan pencarian dan hasil ekspor tidak pernah berbeda dalam menafsirkan sebuah blok.
+`blockId` bermakna **hanya karena §11E**: tanpa id blok yang stabil, tautan "lompat ke bagian ini"
+akan menunjuk blok yang sudah tidak ada. Search-ke-anchor diwujudkan lewat `#block-<uuid>` di URL
+dan `useScrollToBlockAnchor` (`apps/web/hooks/`) yang mencari `[data-block-id]` di DOM editor.
+
+**Cuplikan diekstrak langsung di SQL, bukan lewat `BlockTypeRegistry.toPlainText`** — deviasi dari
+rencana awal kalimat ini, lihat ADR-24 untuk alasannya (tidak ada serializer teks-polos di
+backend; memindahkan satu berarti duplikasi atau paket bersama baru yang sudah ditolak ADR-13).
+Delimiter `ts_headline` adalah karakter kontrol SOH/STX, bukan `<b>` bawaan — frontend memisahnya
+jadi `<mark>` lewat JSX (`apps/web/lib/search.ts`'s `parseSnippet`), bukan
+`dangerouslySetInnerHTML`.
 
 Baris database dicocokkan lewat `database_rows.search_vector` lalu diselesaikan ke `page_id`-nya
-(§20D), sehingga hasil klik selalu mendarat di halaman sungguhan.
+(§20D) — halaman detail baris sendiri kalau ada, kalau tidak halaman pemilik database-nya.
 
 ## 25A.6 Filter pencarian
 
 ```text
 tipe halaman     document | database | whiteboard | diagram
 rentang waktu    diubah 7 hari / 30 hari / tahun ini
-lokasi           di dalam halaman tertentu beserta anaknya
+lokasi           di dalam halaman tertentu beserta anaknya (WITH RECURSIVE)
 urutan            relevansi | terakhir diubah
 ```
+
+`mode=quick|full` adalah parameter eksplisit, bukan diturunkan dari panjang kueri — command
+palette selalu ingin pencocokan prefix (kueri sedang diketik), halaman `/search` selalu ingin
+`websearch_to_tsquery` (kueri final).
 
 ---
 
@@ -332,6 +348,13 @@ Daftar "Create ..." di command palette dan sidebar diambil dari `ContentTypeRegi
 
 Command palette dapat menjadi pusat navigasi aplikasi.
 
+**Status: terbangun (Sprint 23)**, dimigrasi ke `cmdk` (`apps/web/components/ui/command.tsx` —
+sebelumnya sudah ada tapi tidak dipakai; palet lama menulis ulang navigasi keyboard sendiri).
+`shouldFilter={false}`: hasil datang dari `GET /search?mode=quick` (di-debounce 150ms), bukan
+filter fuzzy bawaan cmdk, karena hasil sudah diberi peringkat server. Grup Recents membaca
+`useRecentsStore` (Sprint 22). "Settings" **belum dibangun** — tidak ada rute settings sama sekali
+di `apps/web/app/`, ditunda daripada dibangun tergesa di sprint pencarian.
+
 ---
 
 # 27. Keyboard Shortcut
@@ -347,6 +370,13 @@ Ctrl + Shift + Z    Redo
 ```
 
 Editor shortcut mengikuti Tiptap.
+
+**Status: `Ctrl+K`/`Ctrl+P` terbangun sebagai dua mode berbeda sejak Sprint 23** —
+sebelumnya keduanya membuka palet yang sama persis (bug yang sudah didokumentasikan di
+cheatsheet-nya sendiri sebagai dua shortcut berbeda, padahal perilakunya identik). Sekarang
+`Ctrl+K` membuka mode `'command'` (Create/Actions termasuk), `Ctrl+P` membuka mode `'switcher'`
+(hanya Recents + hasil pencarian halaman, tanpa Create/Actions) — lihat
+`apps/web/stores/command-palette.ts` dan `apps/web/components/keyboard-shortcuts.tsx`.
 
 ---
 

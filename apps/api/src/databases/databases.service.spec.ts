@@ -25,6 +25,11 @@ function fakeDb(selectQueues: Map<unknown, unknown[][]>): DrizzleDB {
         where: async () => nextSelect(table),
       }),
     }),
+    selectDistinct: () => ({
+      from: (table: unknown) => ({
+        where: async () => nextSelect(table),
+      }),
+    }),
     insert: () => ({
       values: (v: Record<string, unknown>) => ({
         returning: async () => [{ id: 'generated-id', ...v }],
@@ -434,5 +439,143 @@ describe('DatabasesService.updateProperty — relation two-way toggle', () => {
 
     expect(deleteSpy.mock.calls.some(([table]) => table === databaseProperties)).toBe(true);
     expect((result.config as { inversePropertyId: string | null }).inversePropertyId).toBeNull();
+  });
+});
+
+/** Wraps a fakeDb's `update` to record every `{table, values}` a `.set(...)` call makes, while still delegating to the real chain. */
+function captureUpdates(db: DrizzleDB): Array<{ table: unknown; values: Record<string, unknown> }> {
+  const calls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+  const original = (db as unknown as { update: (table: unknown) => { set: (v: Record<string, unknown>) => unknown } }).update;
+  (db as unknown as { update: unknown }).update = (table: unknown) => {
+    const chain = original(table);
+    return {
+      set: (v: Record<string, unknown>) => {
+        calls.push({ table, values: v });
+        return chain.set(v);
+      },
+    };
+  };
+  return calls;
+}
+
+describe('DatabasesService.reorderRow', () => {
+  it('computes the midpoint between two neighbors', async () => {
+    const row1 = { id: 'row-1', databaseId: 'db-1', values: {}, computed: {}, position: 0 };
+    const row2 = { id: 'row-2', databaseId: 'db-1', values: {}, computed: {}, position: 1 };
+    const row3 = { id: 'row-3', databaseId: 'db-1', values: {}, computed: {}, position: 4 };
+    const queues = new Map<unknown, unknown[][]>([[databaseRows, [[row2], [row1, row2, row3]]]]);
+    const db = fakeDb(queues);
+    const updates = captureUpdates(db);
+    const graph = new FormulaGraphService(db);
+    const recompute = new FormulaRecomputeService(db, graph, { addTimeout: vi.fn(), deleteTimeout: vi.fn() } as never);
+    const service = new DatabasesService(db, {} as never, graph, recompute);
+
+    await service.reorderRow('row-2', 'row-1', 'row-3');
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toEqual({ table: databaseRows, values: { position: 2 } });
+  });
+
+  it('goes before the first item when beforeId is null, and after the last when afterId is null', async () => {
+    const row1 = { id: 'row-1', databaseId: 'db-1', values: {}, computed: {}, position: 5 };
+    const row2 = { id: 'row-2', databaseId: 'db-1', values: {}, computed: {}, position: 1 };
+    const queuesStart = new Map<unknown, unknown[][]>([[databaseRows, [[row2], [row1, row2]]]]);
+    const dbStart = fakeDb(queuesStart);
+    const updatesStart = captureUpdates(dbStart);
+    const graphStart = new FormulaGraphService(dbStart);
+    const recomputeStart = new FormulaRecomputeService(dbStart, graphStart, { addTimeout: vi.fn(), deleteTimeout: vi.fn() } as never);
+    await new DatabasesService(dbStart, {} as never, graphStart, recomputeStart).reorderRow('row-2', null, 'row-1');
+    expect(updatesStart[0].values).toEqual({ position: 4 });
+
+    const queuesEnd = new Map<unknown, unknown[][]>([[databaseRows, [[row2], [row1, row2]]]]);
+    const dbEnd = fakeDb(queuesEnd);
+    const updatesEnd = captureUpdates(dbEnd);
+    const graphEnd = new FormulaGraphService(dbEnd);
+    const recomputeEnd = new FormulaRecomputeService(dbEnd, graphEnd, { addTimeout: vi.fn(), deleteTimeout: vi.fn() } as never);
+    await new DatabasesService(dbEnd, {} as never, graphEnd, recomputeEnd).reorderRow('row-2', 'row-1', null);
+    expect(updatesEnd[0].values).toEqual({ position: 6 });
+  });
+
+  it('renormalizes every sibling once the gap between anchors has collapsed, then retries', async () => {
+    const row1 = { id: 'row-1', databaseId: 'db-1', values: {}, computed: {}, position: 1 };
+    const row2 = { id: 'row-2', databaseId: 'db-1', values: {}, computed: {}, position: 0.5 };
+    const row3 = { id: 'row-3', databaseId: 'db-1', values: {}, computed: {}, position: 1 + 1e-9 };
+    const queues = new Map<unknown, unknown[][]>([[databaseRows, [[row2], [row1, row2, row3]]]]);
+    const db = fakeDb(queues);
+    const updates = captureUpdates(db);
+    const graph = new FormulaGraphService(db);
+    const recompute = new FormulaRecomputeService(db, graph, { addTimeout: vi.fn(), deleteTimeout: vi.fn() } as never);
+    const service = new DatabasesService(db, {} as never, graph, recompute);
+
+    await service.reorderRow('row-2', 'row-1', 'row-3');
+
+    // 3 renumbering writes (row2->0, row1->1, row3->2) + 1 final write at the retried midpoint.
+    expect(updates).toHaveLength(4);
+    expect(updates[updates.length - 1].values).toEqual({ position: 1.5 });
+  });
+
+  it('rejects an unknown reorder anchor', async () => {
+    const row2 = { id: 'row-2', databaseId: 'db-1', values: {}, computed: {}, position: 1 };
+    const queues = new Map<unknown, unknown[][]>([[databaseRows, [[row2], [row2]]]]);
+    const service = makeService(queues);
+
+    await expect(service.reorderRow('row-2', 'ghost', null)).rejects.toThrow(/Reorder anchor ghost not found/);
+  });
+});
+
+describe('DatabasesService.reorderProperty / reorderView', () => {
+  it('reorderProperty computes the midpoint between two neighbor columns', async () => {
+    const p1 = propertyRow({ id: 'p-1', position: 0 });
+    const p2 = propertyRow({ id: 'p-2', position: 1 });
+    const p3 = propertyRow({ id: 'p-3', position: 4 });
+    const queues = new Map<unknown, unknown[][]>([[databaseProperties, [[p2], [p1, p2, p3]]]]);
+    const db = fakeDb(queues);
+    const updates = captureUpdates(db);
+    const graph = new FormulaGraphService(db);
+    const recompute = new FormulaRecomputeService(db, graph, { addTimeout: vi.fn(), deleteTimeout: vi.fn() } as never);
+    const service = new DatabasesService(db, {} as never, graph, recompute);
+
+    await service.reorderProperty('p-2', 'p-1', 'p-3');
+
+    expect(updates).toEqual([{ table: databaseProperties, values: { position: 2 } }]);
+  });
+
+  it('reorderView computes the midpoint between two neighbor tabs', async () => {
+    const v1 = { id: 'v-1', databaseId: 'db-1', name: 'A', type: 'table', config: null, position: 0 };
+    const v2 = { id: 'v-2', databaseId: 'db-1', name: 'B', type: 'table', config: null, position: 1 };
+    const v3 = { id: 'v-3', databaseId: 'db-1', name: 'C', type: 'table', config: null, position: 4 };
+    const queues = new Map<unknown, unknown[][]>([[databaseViews, [[v2], [v1, v2, v3]]]]);
+    const db = fakeDb(queues);
+    const updates = captureUpdates(db);
+    const graph = new FormulaGraphService(db);
+    const recompute = new FormulaRecomputeService(db, graph, { addTimeout: vi.fn(), deleteTimeout: vi.fn() } as never);
+    const service = new DatabasesService(db, {} as never, graph, recompute);
+
+    await service.reorderView('v-2', 'v-1', 'v-3');
+
+    expect(updates).toEqual([{ table: databaseViews, values: { position: 2 } }]);
+  });
+});
+
+describe('DatabasesService.reorderRowIntoGroup', () => {
+  it('writes the new group value and the new position in one update', async () => {
+    const row1 = { id: 'row-1', databaseId: 'db-1', values: {}, computed: {}, position: 0 };
+    const row2 = { id: 'row-2', databaseId: 'db-1', values: { status: 'todo' }, computed: {}, position: 1 };
+    const row3 = { id: 'row-3', databaseId: 'db-1', values: {}, computed: {}, position: 4 };
+    const queues = new Map<unknown, unknown[][]>([
+      [databaseRows, [[row2], [row1, row2, row3]]],
+      [databaseProperties, [[], []]], // recomputeRowAndDependents' own fetch + its graph.getGraph
+      [databaseRelationLinks, [[]]], // selectDistinct — nothing references this row
+    ]);
+    const db = fakeDb(queues);
+    const updates = captureUpdates(db);
+    const graph = new FormulaGraphService(db);
+    const recompute = new FormulaRecomputeService(db, graph, { addTimeout: vi.fn(), deleteTimeout: vi.fn() } as never);
+    const service = new DatabasesService(db, {} as never, graph, recompute);
+
+    await service.reorderRowIntoGroup('row-2', 'status', 'done', 'row-1', 'row-3');
+
+    const groupUpdate = updates.find((u) => u.table === databaseRows && 'values' in u.values);
+    expect(groupUpdate?.values).toMatchObject({ values: { status: 'done' }, position: 2 });
   });
 });

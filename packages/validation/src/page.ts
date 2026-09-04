@@ -45,9 +45,16 @@ export const updatePageSchema = z
     message: 'At least one field must be provided',
   });
 
+/**
+ * `POST /pages/:id/move` body (§19A.4, Sprint 22). Like database rows/views,
+ * the client sends sibling **ids**, never a raw position — the server
+ * re-derives the fractional midpoint via `fractionalPosition`. Either edge
+ * may be `null` for "at the start"/"at the end"; omitting both appends.
+ */
 export const movePageSchema = z.object({
   parentPageId: uuid.nullish(),
-  position: z.number().int().nonnegative().optional(),
+  beforeId: uuid.nullish(),
+  afterId: uuid.nullish(),
 });
 
 export type CreatePageDto = z.infer<typeof createPageSchema>;

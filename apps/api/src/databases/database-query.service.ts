@@ -144,10 +144,13 @@ export class DatabaseQueryService {
         const prop = propsById.get(s.propertyId);
         return prop !== undefined && prop.type !== 'relation'; // relation has no natural order (§53)
       });
-      nextCursor = encodeCursor({
-        values: sortableSorts.map((s) => this.cursorValueFor(last, propsById.get(s.propertyId)!)),
-        id: last.id,
-      });
+      // No explicit sort — the cursor tuple is `[position]`, mirroring
+      // `buildSortSql`/`buildKeysetSql`'s fallback to manual drag order.
+      const values =
+        sortableSorts.length > 0
+          ? sortableSorts.map((s) => this.cursorValueFor(last, propsById.get(s.propertyId)!))
+          : [last.position];
+      nextCursor = encodeCursor({ values, id: last.id });
     }
 
     return { rows, groups, calculations, total, nextCursor, computedAt: new Date().toISOString() };

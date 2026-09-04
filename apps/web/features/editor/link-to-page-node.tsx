@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { api } from '@/lib/api';
+import { linkToPageDropPlugin } from './link-to-page-drop-plugin';
 
 /** Points at an existing page (§12B.3) — a picker until one is chosen, then an inline link. */
 function LinkToPageView({ node, updateAttributes }: NodeViewProps) {
@@ -90,5 +91,10 @@ export const LinkToPage = Node.create({
 
   addNodeView() {
     return ReactNodeViewRenderer(LinkToPageView);
+  },
+
+  // Sidebar -> editor drag (§19A.4, Sprint 22) — see link-to-page-drop-plugin.ts.
+  addProseMirrorPlugins() {
+    return [linkToPageDropPlugin];
   },
 });

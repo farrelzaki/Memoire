@@ -401,3 +401,228 @@ sebelum toggle; ditambahkan bila kebutuhan nyata muncul).
 
 Lihat §23A.1, §23A.2, `apps/api/src/databases/databases.service.ts` (`addRelation`,
 `removeRelation`, `updateRelationProperty`).
+
+---
+
+## ADR-22 — `position` jadi `double precision`, bukan reindex integer per drag
+
+**Konteks.** Sprint 21 menambahkan drag-drop urut ulang untuk baris, kolom, dan tab view.
+`database_properties.position`/`database_rows.position`/`database_views.position` sebelumnya
+`integer`, hanya pernah ditulis lewat `max(position) + 1` (tambah di akhir) atau tukar posisi
+berdampingan (`moveView`). Menjatuhkan sebuah item di antara dua tetangga sembarang butuh cara
+menyisip tanpa menomori ulang semua saudaranya.
+
+**Keputusan.** Ubah ketiga kolom itu jadi `double precision`. Posisi baru = titik tengah dua
+tetangga (`fractionalPosition`, sudah ada tanpa dipakai di `apps/web/lib/position.ts` sejak
+sebelum Sprint 21 — dipromosikan ke `packages/validation/src/position.ts` supaya `apps/api` juga
+bisa memakainya). Saat celah sudah terlalu rapat (`< 1e-7`), sisi server menomori ulang seluruh
+saudara ke bilangan bulat berjarak 1 (`renormalizePositions`) lalu mencoba sekali lagi.
+
+**Alasan.** Alternatifnya — reindex-shift semua baris kena drag — berarti menulis ulang N baris
+untuk satu drag, dan itu justru kode yang *lebih* rumit untuk hasil yang lebih buruk (kolom float
+sudah ada helper aritmetikanya, tinggal dipakai; reindex-shift belum ada sama sekali). Migrasi
+`ALTER COLUMN ... TYPE double precision` aman tanpa backfill (int -> float tanpa kehilangan
+presisi), index `(database_id, position)` yang ada tetap valid.
+
+**Konsekuensi yang mudah terlewat.** Sebelum sprint ini, jalur baca baris (`database-query.lib.ts`
+`buildSortSql`) **tidak pernah** mengurutkan berdasarkan `position` sama sekali — tanpa sort
+eksplisit, satu-satunya `ORDER BY` adalah `id asc`. Menambah kolom float tanpa memperbaiki ini
+berarti drag baris tidak akan terlihat berubah sama sekali. Perbaikannya: `buildSortSql` jatuh ke
+`position asc` (sebelum tiebreak `id asc`) saat `sorts` kosong; `buildKeysetSql` dan cursor
+`nextCursor` di `database-query.service.ts` mengikuti fallback yang sama supaya keyset pagination
+tetap konsisten dengan urutan yang benar-benar dirender.
+
+Lihat §19A.4, §21, §22A.6, `apps/api/src/databases/database-query.lib.ts`
+(`buildSortSql`/`buildKeysetSql`), `apps/api/src/databases/databases.service.ts`
+(`reorderRow`/`reorderProperty`/`reorderView`/`reorderRowIntoGroup`).
+
+---
+
+## ADR-23 — Drag sidebar ke editor pakai native HTML5 DnD, bukan dnd-kit yang menjangkau ke dalam ProseMirror
+
+**Konteks.** Sprint 22 menambahkan kemampuan menyeret satu baris sidebar ke dalam dokumen yang
+sedang dibuka, menghasilkan blok `linkToPage`. ADR-11 (Sprint 14) sudah menetapkan: dnd-kit tidak
+pernah dipasang di dalam DOM konten ProseMirror, drag di dalam editor selalu native ProseMirror.
+Kasus baru ini adalah versi lain dari batas yang sama — drag *dimulai* di luar editor (sidebar,
+wilayah dnd-kit) tapi *berakhir* di dalam editor.
+
+**Keputusan.** Baris sidebar tetap dikelola dnd-kit untuk reorder/reparent di dalam pohon sidebar
+(`useDraggable`/`useDroppable`, lihat §22.3), tapi drag yang melewati batas sidebar->editor dijalankan
+lewat native browser drag: atribut HTML `draggable` + `dataTransfer` di elemen baris terluar,
+ditangkap oleh plugin ProseMirror `handleDOMEvents.drop`
+(`apps/web/features/editor/link-to-page-drop-plugin.ts`) yang membaca MIME type kustom
+(`application/x-memoire-page-id`) dan menyisipkan node `linkToPage` pada titik drop. Tidak ada
+`DndContext` yang menjangkau ke dalam DOM editor untuk mewujudkan ini.
+
+Dua mekanisme drag ini hidup berdampingan di satu baris DOM tanpa berebut pointer event karena
+dipisah oleh elemen: listener dnd-kit (`{...attributes} {...listeners}`) hanya dipasang di
+`<span>` handle kecil (`⠿`), sedangkan `draggable`/`onDragStart` native ada di `<div>` baris
+terluar. Menyeret handle -> reorder/reparent dnd-kit di sidebar. Menyeret badan baris (misal ke
+editor) -> native HTML5 drag, karena `PointerSensor` dnd-kit cuma mendengarkan `pointerdown` di
+handle-nya, bukan di seluruh baris.
+
+**Alasan.** Menyatukan kedua drag ini di bawah satu `DndContext` berarti context itu harus
+menjangkau ke dalam DOM ProseMirror sebagai target drop — persis yang dilarang ADR-11, dengan
+alasan yang sama: ProseMirror mengelola DOM-nya sendiri secara agresif (re-render on every
+transaction), dan dnd-kit yang ikut memantau node di dalamnya akan saling rebutan kendali.
+
+Lihat §16A.4, §22.4, `apps/web/features/editor/link-to-page-drop-plugin.ts`,
+`apps/web/features/sidebar/sidebar-row.tsx`.
+
+---
+
+## ADR-24 — Cuplikan pencarian dari ekstraksi SQL, dan koreksi cakupan `search_vector` blocks
+
+**Konteks.** ADR-07 (Sprint sebelumnya) sudah memutuskan `search_vector` sebagai generated column
+dengan filter `'["string"]'` pada `jsonb_to_tsvector`, diklaim memperbaiki bug lama "mencari
+'paragraph' mengembalikan hampir semua halaman". Saat implementasi Sprint 23, klaim itu diuji
+langsung ke Postgres — dan ternyata **belum benar-benar terbukti** untuk `blocks.content`: filter
+`'["string"]'` memang mengecualikan KUNCI JSON (key), tapi tidak mengecualikan NILAI string dari
+kunci `type`/`text` Tiptap sendiri (`{"type": "paragraph", ...}` — "paragraph" di sini adalah NILAI
+string yang sah, bukan key). Diverifikasi empiris: 285 blok cocok palsu untuk kueri "paragraph"
+sebelum perbaikan, 0 sesudah.
+
+**Keputusan.** `blocks.searchVector` diubah dari `jsonb_to_tsvector(..., '["string"]')` (seluruh
+pohon JSON) menjadi `to_tsvector('simple', jsonb_path_query_array(content, '$.**.text')::text)` —
+dibatasi ke kunci yang secara harfiah bernama `text`, satu-satunya tempat Tiptap menyimpan teks
+yang benar-benar ditampilkan. Generated column melarang subquery (`select ... from
+jsonb_array_elements_text(...)`), jadi ekstraksinya lewat cast `::text` pada array JSONB hasil
+`jsonb_path_query_array`, bukan `string_agg` — Postgres men-tokenize tanda kurung/kutip array itu
+sebagai pemisah kata, cukup untuk tsvector meski bukan teks yang rapi.
+
+`database_rows.values` **tidak** kena bug yang sama (diverifikasi: 0 hasil palsu) — bentuknya
+berbeda dari `blocks.content` (dikunci oleh id properti, bukan struktur `type`/`text` Tiptap), jadi
+kolomnya tetap `'["string"]'` tanpa perubahan.
+
+**Cuplikan (`ts_headline`) diekstrak di SQL, bukan lewat serializer backend.** §25A.5 awalnya
+menyebut "serializer yang sama dengan Markdown export" — ternyata `apps/api/src/export/export.service.ts`
+cuma dump JSON datar, tidak ada serializer teks-polos di backend sama sekali, dan
+`BlockTypeRegistry.toPlainText` (frontend, `apps/web/features/editor/block-type-registry.ts`)
+membawa objek ekstensi Tiptap yang tidak bisa dipindah ke NestJS begitu saja. Porting satu
+serializer baru berarti menduplikasi `BlockTypeRegistry` (peringatan §3 CLAUDE.md) atau paket
+bersama baru (sudah ditolak ADR-13). Cuplikan karena itu diekstrak langsung di SQL:
+`blocks.content` lewat subquery `string_agg` atas `jsonb_path_query_array(..., '$.**.text')`
+(subquery legal di sini karena bukan generated column), `database_rows.values` lewat pola serupa
+dengan filter JSONPath `$.**?(@.type() == "string")` (semua nilai string, tanpa batasan kunci
+`text` — sesuai bentuknya yang flat).
+
+Delimiter `ts_headline` diganti dari `<b>`/`</b>` bawaan ke karakter kontrol SOH/STX
+(`\x01`/`\x02`) — frontend memisahnya jadi `<mark>` lewat JSX biasa (`apps/web/lib/search.ts`,
+`parseSnippet`), bukan `dangerouslySetInnerHTML`, konsisten dengan tidak ada view daftar lain di
+kodebase ini yang menyuntikkan HTML mentah.
+
+**Peluruhan recency** pada `ts_rank_cd` (§25A.4) pakai half-life 30 hari — angka konkret yang
+tidak disebutkan spek asli, dipilih karena cukup baru untuk membuat halaman minggu ini jelas
+mengungguli halaman setahun lalu, cukup longgar agar catatan sebulan lalu tidak lenyap dari hasil.
+
+Lihat §25A, `apps/api/src/search/search-query.lib.ts`, `apps/api/src/db/schema.ts`
+(`blocks.searchVector`), `apps/api/src/search/search.service.ts`, `apps/web/lib/search.ts`.
+
+---
+
+## ADR-25 — Ekspor workspace dikemas di klien dengan `fflate`, backup dikemas di server
+
+**Konteks.** §30B merancang satu renderer (`BlockTypeRegistry`/`PropertyTypeRegistry`) yang
+melayani cuplikan pencarian, clipboard, DAN berkas ekspor — implikasinya, ekspor bisa dibangun
+sebagai endpoint backend yang membaca database lalu merender. Tapi ADR-24 (Sprint 23) sudah
+menetapkan kedua registry itu **frontend-only**: `BlockTypeDefinition`/`PropertyTypeDefinition`
+membawa objek ekstensi Tiptap yang tidak bisa jalan di NestJS. Memindahkannya ke backend berarti
+menduplikasi registry (dilarang §3 CLAUDE.md) atau paket bersama baru (sudah ditolak ADR-13).
+
+**Keputusan.** Ekspor per-halaman (Markdown/HTML) dan per-view (CSV) berjalan sepenuhnya di klien,
+memakai ulang registry yang sudah ada dan sudah benar — tidak ada endpoint backend baru untuk
+ekspor. ZIP ekspor workspace juga dikemas di klien, pakai `fflate` (~8KB, murni JS, jalan di
+browser tanpa polyfill Node) — bukan `archiver`/`yazl` yang disebut §30B.4, karena keduanya
+berorientasi Node stream dan tidak cocok begitu pengemasan pindah ke browser.
+
+**Backup (§31) adalah pengecualian yang disengaja, bukan inkonsistensi.** Isi backup adalah
+`memoire.json` (dump JSON mentah dari `ExportService.exportWorkspace()`, sudah ada sejak sebelum
+sprint ini) plus lampiran biner — sama sekali tidak melalui registry manapun. Karena itu backup
+bisa, dan memang, tetap murni server-side — termasuk dari `@Cron` tanpa browser yang terbuka.
+ZIP-nya dikemas dengan `archiver`\* di server.
+
+\* **Catatan implementasi:** `archiver` versi yang terinstal (v8) ternyata rewrite ESM dengan API
+berbeda total dari API klasik yang didokumentasikan `@types/archiver` — inkompatibel begitu
+dipakai. Diganti `fflate` di sisi server juga (bisa jalan di Node maupun browser), sehingga satu
+library menutup seluruh kebutuhan ZIP sprint ini, bukan dua library terpisah seperti rencana awal.
+
+**Konsekuensi yang perlu dipahami.** Ekspor workspace jadi N permintaan HTTP berurutan/paralel dari
+browser, bukan satu pembacaan langsung ke Postgres — dapat diterima untuk aplikasi personal
+satu-pengguna yang melakukan ini sebagai aksi manual sesekali, bukan jalur panas.
+
+Lihat §30B, §30B.4, §31, `apps/web/features/export/workspace-export.ts`,
+`apps/api/src/backup/backup.service.ts`.
+
+---
+
+## ADR-26 — Riwayat versi: hash JSON kanonik, retensi per-workspace, dan `VersionsService` tanpa `PagesService`
+
+**Konteks.** Sprint 25 membangun §33A (riwayat versi) dan memperbaiki dua bug Trash (§32). Lima
+keputusan desain lahir dari sprint ini yang tidak jelas dari kode saja.
+
+**1. Judul dan ikon ikut divers, bukan hanya konten blok.** §33A.2 sendiri hanya menyebut satu
+titik hook (`BlocksService.replace`) — bacaan literalnya adalah versi hanya menangkap blok. Saat
+perencanaan, pengguna secara eksplisit memilih menyertakan judul/ikon juga (lawan dari opsi
+"blocks-only" yang direkomendasikan karena lebih sederhana). Konsekuensinya, `PagesService.update`
+juga memanggil `VersionsService.autoSnapshotIfDue` saat `title`/`icon` berubah — bukan cuma
+`BlocksService.replace`. `contentHash` mencakup ketiganya (`title`, `icon`, `blocks`) sekaligus,
+supaya perubahan judul saja tetap memicu versi baru.
+
+**2. Hash konten dari JSON yang di-canonical-kan, bukan `JSON.stringify` polos.** ECMAScript memang
+menjamin urutan enumerasi kunci sendiri hari ini, tapi tugas hash ini murni "apakah sesuatu benar-
+benar berubah" — kata "kanonik" di §33A.1 sendiri sudah eksplisit. `canonical-json.lib.ts` melakukan
+sort kunci rekursif sebelum `JSON.stringify`, ~10 baris, cukup murah untuk tidak dipertaruhkan.
+
+**3. Retensi satu nilai per-workspace, bukan per-halaman.** §33A.3 menyebut "bisa diatur di
+Settings" tapi tidak bilang di mana ia hidup — tidak ada mekanisme setting per-workspace yang sudah
+ada untuk dipakai ulang. Ditambahkan `workspaces.settings` (jsonb, meniru pola `pages.settings` yang
+sudah ada) berisi `{ versionRetentionDays }`, bukan tabel baru. Per-halaman ditolak: kompleksitas UI
+dan penyimpanan tambahan untuk kasus yang jarang dibutuhkan di aplikasi personal.
+
+**4. Batas keras 200 versi/halaman berlaku bahkan saat "simpan selamanya".** `retentionDays: null`
+melewati pemangkasan jendela waktu, tapi `computeVersionsToDelete` tetap menegakkan `hardCap` di
+langkah terakhir — tanpa ini, satu halaman yang sering diedit bisa tumbuh tak terbatas meski tier
+bulanan sudah menyusutkan sebagian besar. Ini disengaja, bukan bug melawan ekspektasi "selamanya".
+
+**5. Versi kedua hasil restore berakhir `kind='auto'`.** §33A.6 meminta "tulis konten lama sebagai
+versi baru" tanpa menentukan `kind`-nya. `VersionsService.restore` menulis snapshot `pre_restore`
+untuk keadaan sekarang, lalu memanggil `BlocksService.replace` dengan konten lama — hook
+`autoSnapshotIfDue` yang sudah ada otomatis menangkap ini sebagai versi `'auto'` baru, karena
+hash-nya beda dari snapshot `pre_restore` yang baru ditulis. Memakai ulang hook yang sama (bukan
+jalur tulis khusus ketiga) lebih sederhana, dengan konsekuensi versi hasil-restore ini bisa
+kena pemangkasan retensi otomatis di kemudian hari seperti versi auto lainnya — dianggap wajar,
+tapi layak diketahui pembaca kode, bukan kebetulan.
+
+**6. `VersionsService` tidak bergantung pada `PagesService`.** `BlocksService` sudah bergantung
+pada `PagesService`, dan `VersionsService` perlu dipanggil dari dalam transaksi keduanya — kalau
+`VersionsService` juga bergantung pada `PagesService`, terbentuk siklus tiga-arah
+(`Pages -> Versions -> Blocks -> Pages`) yang butuh `forwardRef` konsisten di semua sisi. Sebagai
+gantinya, `VersionsService` membaca/menulis tabel `pages` langsung lewat `tx` mentah — pola yang
+sama dengan "raw `tx.insert` alih-alih memanggil service" yang sudah dipakai kode impor Sprint 24
+untuk `DatabasesService` (siklus itu, dan alasan menghindarinya, ada di §39A/Sprint 24B). Satu-
+satunya siklus modul yang tersisa adalah `BlocksModule <-> VersionsModule` (untuk langkah tulis blok
+di `restore`), diselesaikan dengan `forwardRef` di kedua sisi modul **dan** di parameter constructor
+kedua service — siklus impor ES riil (bukan cuma siklus DI Nest) butuh `forwardRef` di titik
+injeksi juga, tidak cukup hanya di level modul, kalau tidak kelas yang direferensikan masih
+`undefined` saat metadata decorator dievaluasi.
+
+**7. Bug 1 Trash — restore mengembalikan descendant tanpa syarat.** `setArchived` versi lama hanya
+menyentuh satu baris `pages`; anak dari halaman yang diarsipkan jadi yatim tersembunyi (tak
+terjangkau dari sidebar, tak muncul di Trash). Perbaikannya membuat archive/restore rekursif ke
+seluruh subtree dalam satu transaksi. Restore mengembalikan SEMUA descendant yang sedang terarsip
+tanpa syarat — bukan hanya yang diarsipkan bersamaan waktu dengan induknya (itu butuh melacak
+`archivedAt` per node, kompleksitas ekstra untuk manfaat kecil di aplikasi satu pengguna). Trade-off
+eksplisit: anak yang diarsip ulang secara independen lalu induknya di-restore, akan ikut kembali —
+diterima.
+
+**8. Bug 2 Trash — urutan hapus subtree yang aman-FK.** `databaseRows.pageId -> pages.id` adalah
+`ON DELETE no action`, beda dengan `databases.ownerPageId`/`databaseRows.databaseId` yang cascade.
+`deletePageTree` versi lama (depth-first rekursif) bisa menghapus halaman detail baris sebelum
+halaman pemilik database-nya, memicu FK violation yang muncul sebagai `INTERNAL_ERROR` — bug nyata
+yang tertangkap langsung di Sprint 24B saat membersihkan data uji. Diperbaiki dengan strategi yang
+sudah terbukti di `test/test-helpers.ts`: kumpulkan seluruh id subtree lebih dulu (BFS), null-kan
+`databaseRows.pageId` yang menunjuk ke subtree itu, baru hapus halaman dari yang terdalam — kode
+produksi dan kode uji kini sengaja memakai strategi yang sama.
+
+Lihat §32, §33A, `apps/api/src/pages/pages.service.ts`, `apps/api/src/versions/`,
+`apps/api/src/blocks/blocks.service.ts`, `apps/api/test/test-helpers.ts`.

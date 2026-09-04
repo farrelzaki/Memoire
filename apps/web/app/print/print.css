@@ -1,0 +1,39 @@
+/* Print stylesheet (§30B.3, Sprint 24) — loaded only by /print/[pageId]. */
+
+@media print {
+  @page {
+    margin: 2cm;
+  }
+
+  body {
+    counter-reset: page;
+  }
+
+  .print-page::after {
+    counter-increment: page;
+    content: counter(page);
+    position: fixed;
+    bottom: 0.5cm;
+    right: 2cm;
+    font-size: 10px;
+    color: #71717a;
+  }
+
+  .print-content [data-type='callout'],
+  .print-content pre,
+  .print-content table {
+    break-inside: avoid;
+  }
+
+  .print-content h1,
+  .print-content h2,
+  .print-content h3 {
+    break-after: avoid;
+  }
+
+  .print-content a::after {
+    content: ' (' attr(href) ')';
+    font-size: 0.85em;
+    color: #71717a;
+  }
+}

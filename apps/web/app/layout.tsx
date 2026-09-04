@@ -41,12 +41,16 @@ export default function RootLayout({
         <Providers>
           <KeyboardShortcuts />
           <div className="flex h-full">
-            <Sidebar />
+            <div className="no-print contents">
+              <Sidebar />
+            </div>
             <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
           </div>
-          <CommandPalette />
-          <OfflineManager />
-          <Toaster />
+          <div className="no-print">
+            <CommandPalette />
+            <OfflineManager />
+            <Toaster />
+          </div>
         </Providers>
       </body>
     </html>

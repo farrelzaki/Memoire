@@ -1,9 +1,10 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, notInArray, or, sql } from 'drizzle-orm';
-import { DRIZZLE_DB, DrizzleDB } from '../db/drizzle.provider';
+import { DRIZZLE_DB, DrizzleDB, DrizzleTx } from '../db/drizzle.provider';
 import { Block, blocks } from '../db/schema';
 import { PageLinksService } from '../page-links/page-links.service';
 import { PagesService } from '../pages/pages.service';
+import { VersionsService } from '../versions/versions.service';
 import { collectDescendantBlockIds } from './block-tree.lib';
 import { BlockPayloadDto } from './blocks.schema';
 
@@ -11,8 +12,9 @@ import { BlockPayloadDto } from './blocks.schema';
 export class BlocksService {
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDB,
-    private readonly pagesService: PagesService,
+    @Inject(forwardRef(() => PagesService)) private readonly pagesService: PagesService,
     private readonly pageLinksService: PageLinksService,
+    @Inject(forwardRef(() => VersionsService)) private readonly versionsService: VersionsService,
   ) {}
 
   async getByPage(pageId: string): Promise<Block[]> {
@@ -44,15 +46,16 @@ export class BlocksService {
    * `updated_at` only advances when `content` actually changed, so a pure
    * reorder doesn't create a version snapshot (§33A).
    */
-  async replace(pageId: string, nodes: BlockPayloadDto[]): Promise<Block[]> {
-    await this.pagesService.findOne(pageId);
+  async replace(pageId: string, nodes: BlockPayloadDto[], externalTx?: DrizzleTx): Promise<Block[]> {
+    const page = await this.pagesService.findOne(pageId);
 
-    return this.db.transaction(async (tx) => {
+    const run = async (tx: DrizzleTx): Promise<Block[]> => {
       const ids = nodes.map((n) => n.id);
 
       if (ids.length === 0) {
         await tx.delete(blocks).where(eq(blocks.pageId, pageId));
         await this.pageLinksService.rebuildForPage(tx, pageId, nodes);
+        await this.versionsService.autoSnapshotIfDue(tx, pageId, page.title, page.icon, []);
         return [];
       }
 
@@ -84,11 +87,22 @@ export class BlocksService {
 
       await this.pageLinksService.rebuildForPage(tx, pageId, nodes);
 
-      return tx
+      const result = await tx
         .select()
         .from(blocks)
         .where(eq(blocks.pageId, pageId))
         .orderBy(sql`${blocks.position} asc`);
-    });
+
+      await this.versionsService.autoSnapshotIfDue(
+        tx,
+        pageId,
+        page.title,
+        page.icon,
+        result.map((b) => ({ id: b.id, type: b.type, content: b.content, position: b.position })),
+      );
+      return result;
+    };
+
+    return externalTx ? run(externalTx) : this.db.transaction(run);
   }
 }

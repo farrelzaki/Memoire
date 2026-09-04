@@ -212,3 +212,23 @@
 .dark .ProseMirror blockquote { border-left-color: #3f3f46; color: #a1a1aa; }
 .dark .ProseMirror pre { background: #18181b; }
 .dark .ProseMirror hr { border-top-color: #3f3f46; }
+
+/* Scroll-to-block anchor (§25A.5, Sprint 23) — briefly marks the block a
+   search hit or `#block-<id>` link landed on. */
+.block-anchor-highlight {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+  border-radius: 4px;
+  transition: outline-color 1.5s ease-out;
+}
+
+/* App shell chrome (sidebar, command palette, toasts) never prints — the
+   root layout wraps every route including /print/[pageId], so this is the
+   only way to keep app chrome out of the printed/PDF output (§30B.3,
+   Sprint 24) without giving /print its own <html>/<body> (App Router
+   layouts can't opt out of the root one). */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

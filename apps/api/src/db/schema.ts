@@ -2,6 +2,8 @@ import { sql } from 'drizzle-orm';
 import {
   AnyPgColumn,
   boolean,
+  customType,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -11,6 +13,13 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+
+// No built-in Drizzle column type for Postgres tsvector. `search_vector` is a
+// generated stored column (§25A, ADR-07) — the hand-written SQL migration is
+// the actual source of truth for the DDL; this declaration only lets the
+// query builder reference the column (Drizzle Kit can't emit generated-column
+// DDL, so `db:generate` must never touch these).
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' });
 
 /**
  * Full content schema (technical plan §10).
@@ -28,6 +37,11 @@ export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   icon: text('icon'),
+  // Workspace-wide config, small and not filtered/sorted (§57 Decision 3) —
+  // mirrors `pages.settings`. Currently just `{ versionRetentionDays }`
+  // (§33A.3; null/absent = keep forever) since there's no other
+  // workspace-level setting yet.
+  settings: jsonb('settings').$type<Record<string, unknown>>().notNull().default({}),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -51,7 +65,8 @@ export const pages = pgTable(
     type: text('type').notNull().default('document'),
     isFavorite: boolean('is_favorite').notNull().default(false),
     isArchived: boolean('is_archived').notNull().default(false),
-    position: integer('position').notNull().default(0),
+    // Fractional (§19A.4, Sprint 21/ADR-22) — see databaseProperties.position.
+    position: doublePrecision('position').notNull().default(0),
     // fullWidth, smallText, font, locked, coverPosition — not filtered/sorted,
     // so it lives in JSONB rather than dedicated columns (§57 Decision 3).
     settings: jsonb('settings').$type<Record<string, unknown>>().notNull().default({}),
@@ -66,6 +81,10 @@ export const pages = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // Generated stored column (§25A, ADR-07, Sprint 23) — title only, weight A.
+    searchVector: tsvector('search_vector').generatedAlwaysAs(
+      sql`setweight(to_tsvector('simple', coalesce(title, '')), 'A')`,
+    ),
   },
   (table) => ({
     workspaceIdx: index('pages_workspace_idx').on(table.workspaceId),
@@ -73,6 +92,8 @@ export const pages = pgTable(
     updatedIdx: index('pages_updated_idx').on(table.updatedAt),
     favoriteIdx: index('pages_favorite_idx').on(table.isFavorite),
     databaseIdx: index('pages_database_idx').on(table.databaseId),
+    searchIdx: index('pages_fts_idx').using('gin', table.searchVector),
+    titleTrgmIdx: index('pages_title_trgm').using('gin', sql`${table.title} gin_trgm_ops`),
   }),
 );
 
@@ -103,12 +124,67 @@ export const blocks = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // Generated stored column (§25A, ADR-07/ADR-24, Sprint 23). Scoped to
+    // `$.**.text` — Tiptap's actual displayed-text field — rather than every
+    // JSON string value: `jsonb_to_tsvector(..., '["string"]')` alone still
+    // indexes Tiptap's own `type`/`text` discriminator KEYS' string VALUES
+    // (e.g. every paragraph block's `"type": "paragraph"`), so searching
+    // "paragraph" matched nearly every page even with the `'["string"]'`
+    // filter — confirmed empirically (285 false-positive blocks) before this
+    // fix, 0 after. See ADR-24. `jsonb_path_query_array(...)::text` (not a
+    // subquery — generated columns forbid those) yields the bracketed JSON
+    // array text (`["a", "b"]`), which `to_tsvector`'s parser tokenizes past
+    // the punctuation just fine.
+    searchVector: tsvector('search_vector').generatedAlwaysAs(
+      sql`to_tsvector('simple', jsonb_path_query_array(content, '$.**.text')::text)`,
+    ),
   },
   (table) => ({
     pageIdx: index('blocks_page_idx').on(table.pageId),
     parentBlockIdx: index('blocks_parent_idx').on(table.parentBlockId),
     positionIdx: index('blocks_position_idx').on(table.position),
     descendantIdsIdx: index('blocks_descendants_idx').using('gin', table.descendantIds),
+    searchIdx: index('blocks_fts_idx').using('gin', table.searchVector),
+  }),
+);
+
+// §33A.1 page_versions — snapshot history, one row per saved version.
+export const pageVersionKinds = ['auto', 'manual', 'pre_restore', 'pre_import'] as const;
+export type PageVersionKind = (typeof pageVersionKinds)[number];
+
+export interface VersionBlockSnapshot {
+  id: string;
+  type: string;
+  content: unknown;
+  position: number;
+}
+
+export const pageVersions = pgTable(
+  'page_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    pageId: uuid('page_id')
+      .notNull()
+      .references(() => pages.id, { onDelete: 'cascade' }),
+    // Monotonic per page, not a global sequence — §33A.1.
+    version: integer('version').notNull(),
+    kind: text('kind').notNull(), // PageVersionKind
+    label: text('label'),
+    title: text('title').notNull(),
+    icon: text('icon'),
+    // Block snapshot, or null when offloaded to object storage (§33A.4,
+    // >256KB canonical JSON) — see storageKey.
+    content: jsonb('content').$type<VersionBlockSnapshot[]>(),
+    storageKey: text('storage_key'),
+    contentHash: text('content_hash').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    pageVersionUniq: uniqueIndex('page_versions_page_version_uniq').on(table.pageId, table.version),
+    pageCreatedIdx: index('page_versions_page_created_idx').on(table.pageId, table.createdAt.desc()),
   }),
 );
 
@@ -157,7 +233,9 @@ export const databaseProperties = pgTable(
     name: text('name').notNull(),
     type: text('type').notNull(),
     config: jsonb('config').$type<Record<string, unknown>>(),
-    position: integer('position').notNull().default(0),
+    // Fractional (§19A.4, Sprint 21) — a drag-drop insert between two
+    // siblings gets their midpoint, not a full renumber of every row.
+    position: doublePrecision('position').notNull().default(0),
   },
   (table) => ({
     databaseIdx: index('database_properties_database_idx').on(table.databaseId),
@@ -174,7 +252,8 @@ export const databaseRows = pgTable(
       .references(() => databases.id, { onDelete: 'cascade' }),
     pageId: uuid('page_id').references(() => pages.id),
     values: jsonb('values').$type<Record<string, unknown>>(),
-    position: integer('position').notNull().default(0),
+    // Fractional (§19A.4, Sprint 21) — see databaseProperties.position.
+    position: doublePrecision('position').notNull().default(0),
     // The row's permanent number for a `unique_id` property (§20A.2) — assigned
     // once at creation from that property's config.nextValue counter, never
     // reassigned. Null for databases with no unique_id property.
@@ -193,6 +272,10 @@ export const databaseRows = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // Generated stored column (§25A, ADR-07, Sprint 23) — see blocks.searchVector.
+    searchVector: tsvector('search_vector').generatedAlwaysAs(
+      sql`jsonb_to_tsvector('simple', coalesce(values, '{}'::jsonb), '["string"]')`,
+    ),
   },
   (table) => ({
     databaseIdx: index('database_rows_database_idx').on(table.databaseId),
@@ -202,6 +285,7 @@ export const databaseRows = pgTable(
     // for dynamic property-id keys). Deliberate limit, not an oversight.
     valuesGinIdx: index('database_rows_values_gin').using('gin', sql`${table.values} jsonb_path_ops`),
     databasePositionIdx: index('database_rows_db_pos').on(table.databaseId, table.position),
+    searchIdx: index('database_rows_fts_idx').using('gin', table.searchVector),
   }),
 );
 
@@ -247,7 +331,8 @@ export const databaseViews = pgTable(
     name: text('name').notNull(),
     type: text('type').notNull(),
     config: jsonb('config').$type<Record<string, unknown>>(),
-    position: integer('position').notNull().default(0),
+    // Fractional (§19A.4, Sprint 21) — see databaseProperties.position.
+    position: doublePrecision('position').notNull().default(0),
   },
   (table) => ({
     databaseIdx: index('database_views_database_idx').on(table.databaseId),
@@ -358,11 +443,28 @@ export const linkPreviews = pgTable('link_previews', {
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 });
 
+// import_stagings (§30A, Sprint 24) — a preview→confirm import's parsed
+// result, held between the two requests. A table, not an in-memory Map:
+// nothing else in this codebase holds cross-request state outside Postgres,
+// and it survives a dev-server restart mid-flow. Cleaned up on confirm/
+// cancel, or by age (piggybacks the backup cron's daily tick — no second
+// scheduled job for this alone).
+export const importStagings = pgTable('import_stagings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  kind: text('kind').notNull(),
+  summary: jsonb('summary').$type<Record<string, unknown>>().notNull(),
+  parsed: jsonb('parsed').$type<unknown>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Type exports
 export type PageType = 'document' | 'database' | 'whiteboard' | 'diagram';
 
 export type Workspace = typeof workspaces.$inferSelect;
 export type NewWorkspace = typeof workspaces.$inferInsert;
+
+export type PageVersion = typeof pageVersions.$inferSelect;
+export type NewPageVersion = typeof pageVersions.$inferInsert;
 
 export type Page = typeof pages.$inferSelect;
 export type NewPage = typeof pages.$inferInsert;
@@ -389,3 +491,5 @@ export type NewPageLink = typeof pageLinks.$inferInsert;
 
 export type LinkPreview = typeof linkPreviews.$inferSelect;
 export type NewLinkPreview = typeof linkPreviews.$inferInsert;
+
+export type ImportStaging = typeof importStagings.$inferSelect;

@@ -6,6 +6,13 @@
 # 30. Import / Export
 Karena aplikasi personal, fitur backup sangat penting.
 
+**Status (Sprint 24 + 24B): semuanya di bawah sudah terbangun** — Export penuh termasuk yang
+tadinya ditulis "Tahap lanjut" (ZIP, PDF); Import penuh termasuk CSV -> database dan Notion export
+.zip (Sprint 24B, dipisah dari Sprint 24 karena keduanya secara eksplisit "Tahap lanjut" di §30
+sendiri, sementara baris roadmap Sprint 24 sempat mencampurnya dengan yang minimal). HTML *import*
+(kebalikan dari HTML *export*, yang sudah ada sejak Sprint 24) tetap belum ada — tidak disebutkan
+lagi di roadmap manapun setelah Sprint 24B, jadi dianggap ditunda tanpa tenggat.
+
 ## Export
 
 Minimal:
@@ -32,11 +39,12 @@ Markdown
 JSON
 ```
 
-Tahap lanjut:
+Tahap lanjut (terbangun Sprint 24B, kecuali HTML):
 
 ```text
-HTML
+HTML               -- belum, tidak ada tenggat
 CSV
+Notion export .zip
 ```
 
 ---
@@ -49,20 +57,31 @@ CSV
 
 ```text
 Markdown (.md, atau .zip berisi banyak .md)
-  parser yang SAMA dengan paste markdown (§12A.5)
+  parser hand-rolled (`apps/api/src/import/markdown-to-blocks.lib.ts`) — BELUM disambungkan ke
+  paste markdown (§12A.5 punya catatan gap-nya sendiri; keduanya seharusnya satu parser tapi
+  belum, karena paste berjalan di frontend dan parser import ini backend-only)
   struktur folder -> hierarki halaman
-  gambar relatif  -> di-upload ke object storage, tautannya ditulis ulang
+  gambar relatif (http/https) -> di-unduh (lewat penjaga SSRF §29A.1) lalu dipindah ke object
+  storage, tautannya ditulis ulang; gambar dengan path relatif ke berkas lain di dalam zip
+  BELUM ditangani (di luar cakupan — lihat batasan Notion export di bawah)
 
 CSV -> database
   baris pertama = nama properti
-  tipe ditebak per kolom (angka, tanggal, checkbox, sisanya teks),
-  dan tebakan itu DITAMPILKAN untuk dikoreksi sebelum diimpor
-  kolom pertama jadi properti title
+  tipe ditebak per kolom (angka, tanggal, checkbox, sisanya teks — persis 4 tipe ini, tidak
+  pernah menebak select/relation/dll karena butuh config yang tidak bisa disuplai sel CSV),
+  dan tebakan itu DITAMPILKAN untuk dikoreksi sebelum diimpor lewat `PATCH /import/:stagingId`
+  kolom pertama jadi properti title, terkunci — tidak bisa diubah lewat koreksi
 
 Notion export (.zip)
   Notion mengekspor Markdown + CSV dengan sufiks hash pada nama berkas
   hash dipakai untuk menyambungkan tautan antar halaman, lalu dibuang dari judul
   CSV yang berdampingan dengan folder diperlakukan sebagai database
+  **Batasan yang disengaja (§30A, "best-effort, bukan resolver graf-tautan dari nol")**:
+  ekspor database asli Notion juga menyertakan satu .md per baris di dalam folder yang sama
+  dengan .csv-nya (isi yang sama, dua bentuk) — importer ini belum mendeduplikasi itu, jadi
+  baris akan muncul dua kali (satu dari .md sebagai halaman biasa, satu dari baris CSV sebagai
+  halaman detail baris). Tautan internal yang tidak berhasil di-resolve (hash tidak ditemukan)
+  dibiarkan apa adanya dan dilaporkan lewat `warnings`, bukan membuat impor gagal.
 
 memoire.json
   ekspor penuh milik sendiri; jalur restore yang lossless (§31)
@@ -95,12 +114,28 @@ Blok yang tidak dikenali -> jadi blok kode berisi sumber aslinya, bukan dibuang 
 Aturan terakhir penting: kehilangan data saat impor lebih buruk daripada hasil yang jelek tapi
 terlihat.
 
+**Catatan Sprint 24** — baris pertama ("selalu satu halaman induk baru") sudah menjawab pertanyaan
+snapshot `pre_import`: kedua format yang terbangun sprint ini (Markdown, memoire.json) **tidak
+pernah** menimpa halaman yang ada — keduanya selalu membuat halaman baru di bawah induk baru.
+Snapshot `pre_import` baru relevan untuk format yang benar-benar bisa menimpa (Notion-ZIP re-import
+lewat pencocokan hash, Sprint 24B) — pada saat itu tabel `page_versions` (§33A) sudah ada dari
+Sprint 25, jadi urutan sprint menyelesaikan sendiri ketergantungannya, bukan risiko yang perlu
+ditunda dengan sengaja.
+
 ---
 
 # 30B. Renderer: HTML, Markdown, CSV, dan PDF
 
 Satu renderer melayani banyak konsumen sekaligus. Ini bukan kebetulan — ia dirancang begitu supaya
 cuplikan pencarian, isi clipboard, dan berkas ekspor tidak pernah menafsirkan blok secara berbeda.
+
+**Catatan arsitektur (Sprint 24, ADR-25):** `BlockTypeRegistry`/`PropertyTypeRegistry` adalah
+frontend-only (ADR-24, Sprint 23) — membawa objek ekstensi Tiptap yang tidak bisa jalan di NestJS.
+Konsekuensinya, ekspor per-halaman/per-view (Markdown/HTML/CSV) **berjalan di klien**, bukan lewat
+endpoint backend baru — memakai ulang registry yang sama persis dengan yang dipakai editor dan
+pencarian, tanpa duplikasi. ZIP ekspor workspace juga dikemas di klien (`fflate`, bukan
+`archiver`/`yazl` yang disebut §30B.4 — lihat catatan di sana). Ini TIDAK berlaku untuk backup
+(§31): backup adalah artefak berbeda (dump JSON mentah, bukan render), jadi tetap murni server-side.
 
 ```text
 BlockTypeRegistry.toHtml       -> ekspor HTML, clipboard text/html, route cetak
@@ -146,7 +181,8 @@ apps/web/app/print/[pageId]/page.tsx
     toggle dan toggle heading dipaksa terbuka
     a::after { content: " (" attr(href) ")" }   -- URL terlihat saat dicetak
 
-"Ekspor ke PDF" membuka route itu di iframe tersembunyi lalu memanggil print()
+"Ekspor ke PDF" membuka route itu di TAB BARU lalu memanggil print() setelah render selesai
+  (bukan iframe tersembunyi — lebih sederhana untuk debug/fokus di aplikasi personal satu tab)
 ```
 
 Nol dependensi tambahan, memakai font asli pengguna, dan hasilnya bagus justru karena browser
@@ -159,7 +195,11 @@ cetak.
 
 ## 30B.4 ZIP
 
-Butuh satu dependensi kecil: `archiver` atau `yazl` (streaming, tanpa binding native).
+**Terbangun dengan `fflate`, bukan `archiver`/`yazl`** — pengemasan ZIP ini berjalan di KLIEN
+(§30B, ADR-25), jadi butuh library yang jalan di browser tanpa polyfill Node; `archiver`/`yazl`
+berorientasi Node stream dan tidak cocok begitu paket ini pindah ke sisi klien. `fflate` sudah
+terbukti dipakai juga oleh backup (§31, sisi server) dan restore (unzip di klien) — satu library
+untuk semua kebutuhan ZIP sprint ini.
 
 ```text
 memoire-export-2026-05-12.zip
@@ -178,6 +218,12 @@ dan versi untuk dipulihkan.
 # 31. Backup
 Backup harus menjadi fitur inti.
 
+**Status: terbangun (Sprint 24), termasuk penjadwalan** — teksnya sendiri di bawah tadinya menunda
+"backup otomatis... bila aplikasi sudah stabil", tapi dibangun sekarang atas instruksi eksplisit
+saat perencanaan sprint. `@Cron('0 3 * * *')` (`apps/api/src/backup/backup.service.ts`) jalan
+setiap hari, plus trigger manual (`POST /backup/run`) dan restore dari daftar backup di
+`/settings`. Retensi: 7 backup terbaru disimpan lokal di `BACKUP_DIR`, sisanya dihapus.
+
 Contoh:
 
 ```text
@@ -187,19 +233,20 @@ Export Workspace
 workspace-backup.zip
 ```
 
-Isi:
+Isi **terbangun** — disederhanakan dari daftar berkas terpisah di bawah menjadi satu `memoire.json`
+(bentuk yang sama persis dengan `GET /export/json`) + `attachments/`, bukan lima berkas JSON
+terpisah. Fungsinya identik (restore penuh, satu sumber kebenaran) dan menghindari perlu menjaga
+dua bentuk skema JSON (yang sudah ada di `exportWorkspace()`, dan satu lagi yang terpecah) tetap
+sinkron:
 
 ```text
-backup/
-├── pages.json
-├── blocks.json
-├── databases.json
-├── rows.json
-├── settings.json
+memoire-backup-<timestamp>.zip
+├── memoire.json
 └── attachments/
 ```
 
-Tambahkan backup otomatis bila aplikasi sudah stabil.
+Restore memakai ulang pipeline import (§30A) dengan `kind: 'memoire-json'` — tidak ada jalur
+restore terpisah.
 
 ---
 
@@ -225,6 +272,29 @@ Trash
     +--> Restore
     |
     +--> Permanently Delete
+```
+
+**Status: dibangun (Sprint 25).** Dua perbaikan terhadap implementasi sebelumnya:
+
+```text
+Archive/restore kini rekursif ke seluruh subtree, dalam satu transaksi.
+  -> Sebelumnya hanya menyentuh satu baris pages: anak dari halaman yang
+     diarsipkan menjadi tak terjangkau dari sidebar (induknya hilang) tapi
+     tidak pernah muncul di Trash juga (belum isArchived) -- keadaan yatim
+     yang tersembunyi. Restore mengembalikan SEMUA descendant yang sedang
+     terarsip tanpa syarat (bukan hanya yang diarsipkan bersamaan) --
+     mencocokkan perilaku Notion, trade-off yang wajar untuk aplikasi
+     satu pengguna. Lihat ADR-26.
+
+Permanent delete pada subtree berisi database populasi tidak lagi crash.
+  -> database_rows.page_id -> pages.id TIDAK cascade (beda dengan
+     databases.owner_page_id dan database_rows.database_id yang cascade),
+     jadi penghapusan depth-first lama bisa mencoba menghapus halaman detail
+     baris sebelum halaman pemilik database-nya -- Postgres menolak dengan
+     FK violation. Diperbaiki: kumpulkan seluruh id subtree lebih dulu (BFS),
+     null-kan database_rows.page_id yang menunjuk ke subtree itu, baru hapus
+     halaman dari yang terdalam. Reproduksi nyata: Sprint 24B menabrak bug
+     ini saat membersihkan data uji coba import.
 ```
 
 ---
@@ -267,6 +337,13 @@ Dapat dibuat restore snapshot.
 §33 menunda riwayat versi. Seksi ini menspesifikasikannya, dengan perhatian utama pada satu hal:
 autosave berjalan setiap 500–1500ms, jadi kebijakan snapshot yang naif menghasilkan ribuan salinan
 dokumen penuh dalam satu sesi kerja.
+
+**Status: dibangun (Sprint 25).** Satu penyesuaian terhadap spesifikasi awal di bawah: **judul dan
+ikon halaman ikut disnapshot dan bisa direstore**, bukan hanya konten blok — keputusan eksplisit
+pengguna saat sprint ini direncanakan, melampaui satu titik hook literal di `BlocksService.replace`
+yang disebut §33A.2. Konsekuensinya, `PagesService.update` juga memanggil hook snapshot yang sama
+saat `title`/`icon` berubah. Lihat ADR-26 untuk alasan lengkap dan trade-off desain
+tx-composable-nya.
 
 ## 33A.1 Tabel
 

@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import {
   DropdownMenuContent,
   DropdownMenuItem,
@@ -11,9 +12,10 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu';
-import { countWords } from '@/features/editor/block-type-registry';
+import { BlockTypeRegistry, countWords } from '@/features/editor/block-type-registry';
+import { VersionHistoryPanel } from '@/features/versions/version-history-panel';
 import { api } from '@/lib/api';
-import { downloadJson } from '@/lib/download';
+import { downloadBlob, downloadJson } from '@/lib/download';
 import { getSubtreeIds } from '@/lib/pages';
 import type { Page, PageSettings } from '@/lib/types';
 import { toastWithUndo } from '@/stores/toast';
@@ -32,6 +34,7 @@ const FONT_OPTIONS: Array<{ value: NonNullable<PageSettings['font']>; label: str
 export function PageMenu({ page }: { page: Page }) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['pages'] });
@@ -75,12 +78,44 @@ export function PageMenu({ page }: { page: Page }) {
     onSuccess: invalidate,
   });
 
-  const exportPage = async () => {
+  const exportFilename = (ext: string) => `${page.title || 'untitled'}.${ext}`;
+
+  const exportJson = async () => {
     const blocks = page.type === 'document' ? await api.listBlocks(page.id) : [];
-    downloadJson(`${page.title || 'untitled'}.json`, { page, blocks });
+    downloadJson(exportFilename('json'), { page, blocks });
+  };
+
+  /** Root blocks only — nested blocks live inside a root block's own `content` (§11E.4), each serializer walks its own children. */
+  const exportMarkdown = async () => {
+    const blocks = page.type === 'document' ? await api.listBlocks(page.id) : [];
+    const markdown = blocks
+      .map((block) => (block.content ? BlockTypeRegistry.get(block.type)?.toMarkdown(block.content) : ''))
+      .filter(Boolean)
+      .join('\n\n');
+    downloadBlob(exportFilename('md'), new Blob([markdown], { type: 'text/markdown' }));
+  };
+
+  const exportHtml = async () => {
+    const blocks = page.type === 'document' ? await api.listBlocks(page.id) : [];
+    const html = blocks
+      .map((block) => (block.content ? BlockTypeRegistry.get(block.type)?.toHtml(block.content) : ''))
+      .filter(Boolean)
+      .join('\n');
+    downloadBlob(
+      exportFilename('html'),
+      new Blob([`<!doctype html><html><head><meta charset="utf-8"><title>${page.title}</title></head><body>${html}</body></html>`], {
+        type: 'text/html',
+      }),
+    );
+  };
+
+  const exportPdf = () => {
+    window.open(`/print/${page.id}`, '_blank');
   };
 
   return (
+    <>
+    {historyOpen && <VersionHistoryPanel pageId={page.id} onClose={() => setHistoryOpen(false)} />}
     <DropdownMenuContent align="end" className="w-56">
       <DropdownMenuItem onClick={() => favorite.mutate()}>
         <span className="w-4 shrink-0 text-center text-zinc-400">
@@ -163,16 +198,29 @@ export function PageMenu({ page }: { page: Page }) {
         <span className="w-4 shrink-0 text-center text-zinc-400">🔗</span>
         Copy link
       </DropdownMenuItem>
-      <DropdownMenuItem onClick={() => void exportPage()}>
-        <span className="w-4 shrink-0 text-center text-zinc-400">⭳</span>
-        Export
+      <DropdownMenuItem onClick={() => setHistoryOpen(true)}>
+        <span className="w-4 shrink-0 text-center text-zinc-400">↻</span>
+        History
       </DropdownMenuItem>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <span className="w-4 shrink-0 text-center text-zinc-400">⭳</span>
+          Export
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuItem onClick={() => void exportMarkdown()}>Markdown</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => void exportHtml()}>HTML</DropdownMenuItem>
+          <DropdownMenuItem onClick={exportPdf}>PDF</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => void exportJson()}>JSON</DropdownMenuItem>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
       <DropdownMenuSeparator />
       <DropdownMenuItem danger onClick={() => archive.mutate()}>
         <span className="w-4 shrink-0 text-center">🗑</span>
         Move to Trash
       </DropdownMenuItem>
     </DropdownMenuContent>
+    </>
   );
 }
 
@@ -180,7 +228,8 @@ export function PageMenu({ page }: { page: Page }) {
  * Destination list for "Move to…". A page's own subtree is excluded — the
  * backend rejects those moves, so they should never be offered.
  */
-function MoveToItems({ page }: { page: Page }) {
+/** Exported for reuse by the sidebar's own `⋯` menu (Sprint 22). */
+export function MoveToItems({ page }: { page: Page }) {
   const queryClient = useQueryClient();
   const { data: pages = [] } = useQuery({ queryKey: ['pages'], queryFn: api.listPages });
 

@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react';
 import { z } from 'zod';
 import type { PropertyType } from '@/lib/types';
-import { BoardView, CalendarView, GalleryView, TableView } from './database-views';
+import { BoardView, CalendarView, GalleryView, ListView, TableView, TimelineView } from './database-views';
 
 /**
  * Sprint 13 (§11D.4): registry contract for database view types. `component`
@@ -88,6 +88,7 @@ const boardConfigSchema = baseViewConfig.extend({
   cardSize: z.enum(['small', 'medium', 'large']),
   cardPreview: cardPreviewSchema,
   colorByGroup: z.boolean(),
+  collapsedGroups: z.array(z.string()),
 });
 
 const calendarConfigSchema = baseViewConfig.extend({
@@ -101,6 +102,15 @@ const galleryConfigSchema = baseViewConfig.extend({
   cardSize: z.enum(['small', 'medium', 'large']),
   cardPreview: cardPreviewSchema,
   fitImage: z.boolean(),
+});
+
+const listConfigSchema = baseViewConfig;
+
+const timelineConfigSchema = baseViewConfig.extend({
+  startProperty: z.string().optional(),
+  endProperty: z.string().optional(),
+  zoom: z.enum(['day', 'week', 'month', 'quarter', 'year']),
+  showTable: z.boolean(),
 });
 
 ViewTypeRegistry.register({
@@ -140,5 +150,25 @@ ViewTypeRegistry.register({
   configSchema: galleryConfigSchema,
   component: GalleryView,
   requiredProperties: [],
+  supportsGrouping: false,
+});
+
+ViewTypeRegistry.register({
+  key: 'list',
+  label: 'List',
+  icon: '☰',
+  configSchema: listConfigSchema,
+  component: ListView,
+  requiredProperties: [],
+  supportsGrouping: false,
+});
+
+ViewTypeRegistry.register({
+  key: 'timeline',
+  label: 'Timeline',
+  icon: '📊',
+  configSchema: timelineConfigSchema,
+  component: TimelineView,
+  requiredProperties: ['date'],
   supportsGrouping: false,
 });

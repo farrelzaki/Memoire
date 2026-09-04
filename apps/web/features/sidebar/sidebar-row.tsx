@@ -1,5 +1,6 @@
 'use client';
 
+import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -9,12 +10,26 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { PAGE_DRAG_MIME_TYPE } from '@/features/editor/link-to-page-drop-plugin';
+import { MoveToItems } from '@/features/shell/page-menu';
 import { api } from '@/lib/api';
 import type { PageTreeNode } from '@/lib/pages';
 import { useSidebarStore } from '@/stores/sidebar';
 import { toastWithUndo } from '@/stores/toast';
+
+export type DropZone = 'before' | 'after' | 'into';
+
+/** The sidebar's current drag hover state, computed once in `Sidebar`'s `DndContext` and threaded down. */
+export interface SidebarDragState {
+  overId: string | null;
+  zone: DropZone | null;
+  disabledIds: Set<string>;
+}
 
 /**
  * One page row in the sidebar tree: disclosure chevron, icon, title, and the
@@ -26,10 +41,19 @@ export function SidebarRow({
   node,
   depth,
   activePageId,
+  dragState,
+  visibleIds,
+  onPeek,
 }: {
   node: PageTreeNode;
   depth: number;
   activePageId?: string;
+  /** Omit to render without drag support (e.g. Favorites, which isn't reorderable here). */
+  dragState?: SidebarDragState;
+  /** Root-first, depth-first ids of every rendered row — the shift-click range order. Omit to disable multi-select. */
+  visibleIds?: string[];
+  /** Opens the read-only page peek modal for this row (§22.8, Sprint 22). */
+  onPeek?: (pageId: string) => void;
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -38,10 +62,40 @@ export function SidebarRow({
   const expandedIds = useSidebarStore((s) => s.expanded);
   const toggleExpanded = useSidebarStore((s) => s.toggleExpanded);
   const expand = useSidebarStore((s) => s.expand);
+  const selectedIds = useSidebarStore((s) => s.selectedIds);
+  const selectOne = useSidebarStore((s) => s.selectOne);
+  const toggleSelect = useSidebarStore((s) => s.toggleSelect);
+  const selectRange = useSidebarStore((s) => s.selectRange);
+  const clearSelection = useSidebarStore((s) => s.clearSelection);
 
   const isExpanded = expandedIds.includes(node.id);
   const isActive = node.id === activePageId;
+  const isSelected = selectedIds.includes(node.id);
   const hasChildren = node.children.length > 0;
+
+  const handleRowClick = (e: React.MouseEvent) => {
+    if (!visibleIds) return;
+    if (e.shiftKey) {
+      e.preventDefault();
+      selectRange(visibleIds, node.id);
+    } else if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      toggleSelect(node.id);
+    } else if (selectedIds.length > 0) {
+      // A selection is active — a plain click clears it instead of navigating,
+      // matching Notion (the second click is "deselect", not "open").
+      e.preventDefault();
+      clearSelection();
+    }
+  };
+
+  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({ id: node.id });
+  const { setNodeRef: setDropRef } = useDroppable({
+    id: node.id,
+    disabled: dragState?.disabledIds.has(node.id) ?? false,
+  });
+  const isDropTarget = dragState?.overId === node.id;
+  const dropZone = isDropTarget ? dragState?.zone : null;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['pages'] });
 
@@ -84,13 +138,38 @@ export function SidebarRow({
   return (
     <>
       <div
+        ref={(el) => {
+          setDragRef(el);
+          setDropRef(el);
+        }}
+        draggable={!renaming}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(PAGE_DRAG_MIME_TYPE, node.id);
+          e.dataTransfer.effectAllowed = 'copy';
+        }}
         className={`group/row relative flex items-center rounded pr-1 ${
-          isActive
-            ? 'bg-zinc-200/70 dark:bg-zinc-800'
-            : 'hover:bg-zinc-200/50 dark:hover:bg-zinc-800/60'
-        }`}
+          isSelected
+            ? 'bg-blue-100 dark:bg-blue-950/60'
+            : isActive
+              ? 'bg-zinc-200/70 dark:bg-zinc-800'
+              : 'hover:bg-zinc-200/50 dark:hover:bg-zinc-800/60'
+        } ${isDragging ? 'opacity-40' : ''} ${dropZone === 'into' ? 'ring-1 ring-inset ring-blue-400' : ''}`}
         style={{ paddingLeft: 4 + depth * 12 }}
       >
+        {dropZone === 'before' && (
+          <span className="pointer-events-none absolute -top-px left-0 right-0 h-0.5 bg-blue-400" />
+        )}
+        {dropZone === 'after' && (
+          <span className="pointer-events-none absolute -bottom-px left-0 right-0 h-0.5 bg-blue-400" />
+        )}
+        <span
+          {...attributes}
+          {...listeners}
+          className="flex h-5 w-3 shrink-0 cursor-grab items-center justify-center text-xs text-zinc-300 opacity-0 hover:text-zinc-500 group-hover/row:opacity-100"
+          title="Drag to reorder or move"
+        >
+          ⠿
+        </span>
         <button
           type="button"
           onClick={() => toggleExpanded(node.id)}
@@ -114,6 +193,7 @@ export function SidebarRow({
         ) : (
           <Link
             href={`/${node.id}`}
+            onClick={handleRowClick}
             className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-sm"
           >
             <span className="shrink-0 text-[13px]">{node.icon ?? '📄'}</span>
@@ -150,6 +230,15 @@ export function SidebarRow({
                   <span className="w-4 shrink-0 text-center text-zinc-400">⧉</span>
                   Duplicate
                 </DropdownMenuItem>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <span className="w-4 shrink-0 text-center text-zinc-400">→</span>
+                    Move to…
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
+                    <MoveToItems page={node} />
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
                 <DropdownMenuItem
                   onClick={() =>
                     void navigator.clipboard.writeText(`${window.location.origin}/${node.id}`)
@@ -165,6 +254,17 @@ export function SidebarRow({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {onPeek && (
+              <button
+                type="button"
+                onClick={() => onPeek(node.id)}
+                title="Peek"
+                className="flex h-5 w-5 items-center justify-center rounded text-zinc-400 hover:bg-zinc-300/60 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+              >
+                👁
+              </button>
+            )}
 
             <button
               type="button"
@@ -186,6 +286,9 @@ export function SidebarRow({
               node={child}
               depth={depth + 1}
               activePageId={activePageId}
+              dragState={dragState}
+              visibleIds={visibleIds}
+              onPeek={onPeek}
             />
           ))
         ) : (

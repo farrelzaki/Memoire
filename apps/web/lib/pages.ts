@@ -55,6 +55,36 @@ export function getBreadcrumbTrail(pages: Page[], pageId: string): Page[] {
 }
 
 /**
+ * `page`'s siblings (same parent, active, excluding `page` itself), sorted by
+ * position — the options a breadcrumb crumb's dropdown offers for "jump to a
+ * page at this level instead."
+ */
+export function getSiblings(pages: Page[], page: Page): Page[] {
+  return pages
+    .filter((p) => p.parentPageId === page.parentPageId && p.id !== page.id && !p.isArchived)
+    .sort((a, b) => a.position - b.position);
+}
+
+/**
+ * Ids of every row currently rendered in the sidebar tree, root-first and
+ * depth-first, skipping the children of collapsed nodes — i.e. the order a
+ * shift-click range selection should walk. Mirrors how `SidebarRow` itself
+ * decides whether to recurse into `node.children`.
+ */
+export function flattenVisibleIds(nodes: PageTreeNode[], expandedIds: string[]): string[] {
+  const expanded = new Set(expandedIds);
+  const ids: string[] = [];
+  const walk = (list: PageTreeNode[]) => {
+    for (const node of list) {
+      ids.push(node.id);
+      if (expanded.has(node.id)) walk(node.children);
+    }
+  };
+  walk(nodes);
+  return ids;
+}
+
+/**
  * Ids of `pageId` and everything nested beneath it. Used to keep a page's
  * whole subtree out of its own "Move to" targets — a page can never be moved
  * inside itself.

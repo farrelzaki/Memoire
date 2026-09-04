@@ -205,10 +205,11 @@ describe('buildFilterSql', () => {
 });
 
 describe('buildSortSql', () => {
-  it('always tie-breaks on id', () => {
+  it('falls back to manual drag order (position), tie-broken by id, when no sort is configured', () => {
     const clauses = buildSortSql([], propsById);
-    expect(clauses).toHaveLength(1);
-    expect(render(clauses[0]).sql).toContain('id');
+    expect(clauses).toHaveLength(2);
+    expect(render(clauses[0]).sql).toContain('position');
+    expect(render(clauses[1]).sql).toContain('id');
   });
 
   it('emits one clause per known sort, skipping unknown properties', () => {
@@ -223,9 +224,10 @@ describe('buildSortSql', () => {
     expect(render(clauses[0]).sql).toContain('desc');
   });
 
-  it('skips a relation property — no natural order', () => {
+  it('skips a relation property — no natural order — and falls back to position', () => {
     const clauses = buildSortSql([{ propertyId: RELATION.id, direction: 'asc' }], propsById);
-    expect(clauses).toHaveLength(1); // id tiebreak only
+    expect(clauses).toHaveLength(2); // position fallback + id tiebreak
+    expect(render(clauses[0]).sql).toContain('position');
   });
 });
 
@@ -305,21 +307,27 @@ describe('buildKeysetSql', () => {
     expect(render(expr).sql).toContain('<');
   });
 
-  it('falls back to the id-only branch when there are no sorts', () => {
-    const expr = buildKeysetSql([], propsById, { values: [], id: 'row-1' })!;
+  it('falls back to a position-only cursor tuple when there are no sorts', () => {
+    const expr = buildKeysetSql([], propsById, { values: [3], id: 'row-1' })!;
     const { sql, params } = render(expr);
+    expect(sql).toContain('position');
     expect(sql).toContain('id');
-    expect(params).toEqual(['row-1']);
+    expect(params).toEqual(expect.arrayContaining([3, 'row-1']));
   });
 
-  it('ignores a relation in the sort list — falls back to id-only', () => {
+  it('ignores a relation in the sort list — falls back to a position-only cursor tuple', () => {
     const expr = buildKeysetSql([{ propertyId: RELATION.id, direction: 'asc' }], propsById, {
-      values: [],
+      values: [3],
       id: 'row-1',
     })!;
     const { sql, params } = render(expr);
-    expect(sql).toContain('id');
-    expect(params).toEqual(['row-1']);
+    expect(sql).toContain('position');
+    expect(params).toEqual(expect.arrayContaining([3, 'row-1']));
+  });
+
+  it('returns undefined when the cursor tuple length does not match the implicit position fallback', () => {
+    const expr = buildKeysetSql([], propsById, { values: [], id: 'row-1' });
+    expect(expr).toBeUndefined();
   });
 
   it('skips the exact-boundary branch for a null cursor value', () => {

@@ -353,7 +353,14 @@ export function buildFilterSql(
 
 export type SortSpec = { propertyId: string; direction: 'asc' | 'desc' };
 
-/** `ORDER BY` expressions for multi-sort, always tie-broken by `id` for stable keyset pagination (§22A.6). */
+/**
+ * `ORDER BY` expressions for multi-sort, always tie-broken by `id` for stable
+ * keyset pagination (§22A.6). With no explicit sort configured, falls back to
+ * the row's own `position` (§19A.4, Sprint 21) — manual drag order — rather
+ * than the essentially-random order `created_at`/`id` would otherwise give;
+ * `buildKeysetSql` mirrors this exact fallback so cursor pagination stays
+ * consistent with what was actually rendered.
+ */
 export function buildSortSql(sorts: SortSpec[], propsById: Map<string, PropertyMeta>): SQL[] {
   const clauses: SQL[] = [];
   for (const sort of sorts) {
@@ -361,6 +368,9 @@ export function buildSortSql(sorts: SortSpec[], propsById: Map<string, PropertyM
     if (!prop || prop.type === 'relation') continue; // relation has no natural order (§53)
     const ext = extractionSql(prop);
     clauses.push(sort.direction === 'desc' ? sql`${ext} desc nulls last` : sql`${ext} asc nulls last`);
+  }
+  if (clauses.length === 0) {
+    clauses.push(sql`${databaseRows.position} asc`);
   }
   clauses.push(sql`${databaseRows.id} asc`);
   return clauses;
@@ -401,24 +411,32 @@ export function buildKeysetSql(
     const prop = propsById.get(s.propertyId);
     return prop !== undefined && prop.type !== 'relation';
   });
-  if (cursor.values.length !== known.length) return undefined;
+
+  // No explicit sort — the cursor tuple is `[position]`, mirroring
+  // `buildSortSql`'s fallback to manual drag order (§19A.4, Sprint 21).
+  const usePosition = known.length === 0;
+  const columnCount = usePosition ? 1 : known.length;
+  if (cursor.values.length !== columnCount) return undefined;
+
+  const extAt = (i: number): SQL =>
+    usePosition ? sql`${databaseRows.position}` : extractionSql(propsById.get(known[i].propertyId)!);
+  const directionAt = (i: number): 'asc' | 'desc' => (usePosition ? 'asc' : known[i].direction);
 
   const branches: SQL[] = [];
-  for (let i = 0; i <= known.length; i += 1) {
+  for (let i = 0; i <= columnCount; i += 1) {
     const eqParts: SQL[] = [];
     for (let j = 0; j < i; j += 1) {
-      const ext = extractionSql(propsById.get(known[j].propertyId)!);
+      const ext = extAt(j);
       const val = cursor.values[j];
       eqParts.push(val === null ? sql`${ext} is null` : sql`${ext} = ${val}`);
     }
 
     let tail: SQL;
-    if (i < known.length) {
-      const sort = known[i];
-      const ext = extractionSql(propsById.get(sort.propertyId)!);
+    if (i < columnCount) {
+      const ext = extAt(i);
       const val = cursor.values[i];
       if (val === null) continue; // can't express "> null"; skip this branch
-      tail = sort.direction === 'desc' ? sql`${ext} < ${val}` : sql`${ext} > ${val}`;
+      tail = directionAt(i) === 'desc' ? sql`${ext} < ${val}` : sql`${ext} > ${val}`;
     } else {
       tail = sql`${databaseRows.id} > ${cursor.id}`;
     }

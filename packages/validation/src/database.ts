@@ -207,7 +207,7 @@ export const updateRowSchema = z.object({
   values: z.record(z.unknown()),
 });
 
-export const viewTypes = ['table', 'board', 'calendar', 'gallery'] as const;
+export const viewTypes = ['table', 'board', 'calendar', 'gallery', 'list', 'timeline'] as const;
 
 export const createViewSchema = z.object({
   id: uuid.optional(),
@@ -231,6 +231,30 @@ export const addRelationSchema = z.object({
 });
 
 export type AddRelationDto = z.infer<typeof addRelationSchema>;
+
+/**
+ * `POST .../reorder` body (§19A.4, Sprint 21) — drag-drop reorder for rows,
+ * properties, and views. The client sends sibling **ids**, never a position:
+ * the server re-derives the midpoint via `fractionalPosition`, consistent
+ * with never trusting a client-computed value for anything persisted.
+ * Either edge is `null` for "at the start"/"at the end" of the list.
+ */
+export const reorderSchema = z.object({
+  beforeId: uuid.nullable(),
+  afterId: uuid.nullable(),
+});
+
+export type ReorderDto = z.infer<typeof reorderSchema>;
+
+/** `POST /database-rows/:id/reorder-into-group` body — a board card dragged into a different column: reorder + reassign its group property in one transaction. */
+export const reorderIntoGroupSchema = z.object({
+  groupPropertyId: uuid,
+  groupValue: z.unknown(),
+  beforeId: uuid.nullable(),
+  afterId: uuid.nullable(),
+});
+
+export type ReorderIntoGroupDto = z.infer<typeof reorderIntoGroupSchema>;
 
 /**
  * `POST /databases` (§20C) — creates a database directly rather than as a

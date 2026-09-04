@@ -280,7 +280,7 @@ membahasnya penuh.
 ```text
 blocks
 + descendant_ids   uuid[] not null default '{}'   -- §11E.4, id blok bersarang
-+ search_vector    tsvector generated stored      -- §25A
++ search_vector    tsvector generated stored      -- §25A, dibatasi ke $.**.text (ADR-24)
   parent_block_id  DINYATAKAN PERMANEN NULL       -- §11E.4
 
 pages
@@ -361,6 +361,15 @@ di file SQL migrasi:
 
 Ini jebakan yang nyata: `pnpm db:generate` akan menghasilkan migrasi yang terlihat lengkap tapi
 diam-diam melewatkan ketiganya.
+
+**Catatan Sprint 23:** versi `drizzle-kit` yang dipakai sekarang ternyata *bisa* menghasilkan DDL
+`GENERATED ALWAYS AS (...) STORED` sendiri dari `.generatedAlwaysAs()` di `schema.ts` — poin 1 di
+atas tidak semutlak dulu. Yang **masih** harus ditulis tangan: `CREATE EXTENSION IF NOT EXISTS
+pg_trgm` (ekstensi tidak pernah masuk diff skema), dan index GIN yang ikut hilang saat kolom
+generated di-drop+re-add (mengubah ekspresi generated column butuh drop+add, bukan `ALTER COLUMN`
+biasa — index-nya harus dibuat ulang manual setelahnya). Tetap verifikasi tiap migrasi yang
+menyentuh generated column dengan membaca file `.sql`-nya, bukan percaya buta pada output
+`db:generate`.
 
 ---
 

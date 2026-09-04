@@ -62,12 +62,20 @@ DILUAR     person, created by, last edited by   -- melibatkan pengguna lain (§5
 ## 71.4 View database
 
 ```text
-ADA        table, board, calendar, gallery
-SEBAGIAN   board     -- ganti grup lewat dropdown, kartu belum bisa di-drag
-           calendar  -- baca saja, belum bisa seret atau membuat dari klik
+ADA        table, board, calendar, gallery, list, timeline (Sprint 21)
+           duplicate view, lock view (sudah ada sebelum Sprint 21 -- diperbarui di sini
+             karena baris ini sebelumnya salah menandainya BELUM)
+           urutkan tab view lewat drag (dnd-kit) + menu Move left/right (keyboard)
+           board: sub-group + kolektif kartu drag antar/dalam kolom, grup bisa dilipat
+           calendar: seret event ke tanggal lain, tarik tepi untuk ubah rentang
+             (properti dengan endDateProperty), klik hari untuk buat baris, tampilan minggu
+           urutan & lebar kolom tabel via drag (dnd-kit) + resize pointer-drag
+           urutan baris via drag (dnd-kit) -- tabel, list, gallery, board berbagi satu urutan
+SEBAGIAN   board     -- ganti grup lewat dropdown TETAP ada sebagai fallback aksesibilitas
+                        di samping drag; urutan kolom (opsi select/status) belum bisa di-drag
+           calendar  -- event multi-hari dirender sebagai chip berulang per hari, bukan
+                        batang membentang (itu tugas Timeline)
            gallery   -- tanpa konfigurasi kartu maupun gambar sampul
-BELUM      list, timeline / gantt
-           duplicate view, urutkan tab view, lock view
 DITUNDA    chart view  -- nilainya rendah untuk penggunaan pribadi, butuh §20B stabil
 ```
 
@@ -78,13 +86,14 @@ ADA        viewConfigSchema + migrateViewConfig, PERSISTENSI SEMUANYA lewat
            database_views.config (§21A) -- filter, sort, kalkulasi, pageSize,
            rowHeight & wrapCells (table) semuanya bertahan setelah reload
            filter/sort/group/agregasi dijalankan server-side lewat POST /databases/:id/query,
-           keyset pagination (§22A)
+           keyset pagination (§22A), termasuk urutan drag manual (position) saat tanpa sort
            grup filter AND/OR bersarang + operator penuh per tipe properti (mesin, §22A.3-4)
            multi-sort hingga 10 level (mesin + UI chip "+ Sort")
            visibilitas properti -- checkbox tampil/sembunyi per kolom
+           urutan & lebar kolom, sub-group, grup terlipat tersimpan (collapsedGroups, Sprint 21)
 SEBAGIAN   filter builder UI -- mesin mendukung grup AND/OR bersarang, UI baru satu aturan
-BELUM      sub-group, urutan & lebar kolom (dnd-kit, Sprint 21), ukuran & pratinjau kartu,
-           pencarian dalam view, perilaku buka halaman (side/center/full), lock view
+BELUM      ukuran & pratinjau kartu (board/gallery), urutan opsi select/status via drag,
+           pencarian dalam view, perilaku buka halaman (side/center/full)
 ```
 
 ## 71.6 Kalkulasi
@@ -118,10 +127,13 @@ DITUNDA    sinkronisasi database dari sumber eksternal   -- butuh integrasi akun
 
 ```text
 ADA        page icon (emoji), cover (gradien & upload), cover reposition,
-           favorite, duplicate, move to, Trash + restore + hapus permanen,
+           favorite, duplicate, move to, Trash + restore (rekursif ke subtree, Sprint 25)
+             + hapus permanen (aman terhadap database berisi baris, Sprint 25),
            breadcrumb, full width, small text, font family, lock page,
-           hitung kata, panel backlink
-BELUM      riwayat versi, page template, icon dari upload
+           hitung kata, panel backlink,
+           riwayat versi (§33A, Sprint 25) -- snapshot otomatis + manual, diff blok/kata,
+             restore tanpa pernah memundurkan sejarah, retensi bertingkat terjadwal
+BELUM      page template, icon dari upload
 DILUAR     share, publish ke web, guest, komentar, analytics halaman   -- (§56.2)
 ```
 
@@ -129,34 +141,41 @@ DILUAR     share, publish ke web, guest, komentar, analytics halaman   -- (§56.
 
 ```text
 ADA        pohon sidebar, resize sidebar, Favorites, breadcrumb,
-           command palette (Ctrl+K)
-SEBAGIAN   pencarian  -- ILIKE, tanpa ranking, tanpa cuplikan, mencocokkan kunci JSON
-           shortcut   -- hanya Ctrl+K / Ctrl+P / Ctrl+N
-BELUM      drag halaman di sidebar (urutkan + pindah induk), Recents,
-           multi-select halaman, full-text search + ranking + cuplikan,
-           filter pencarian, page peek, cheatsheet shortcut
+           command palette v2 (Ctrl+K, cmdk, hasil dari GET /search),
+           quick switcher (Ctrl+P, mode terpisah dari Ctrl+K),
+           drag halaman di sidebar (urutkan + pindah induk),
+           drag halaman sidebar ke editor (jadi link-to-page), Recents,
+           multi-select halaman (shift/ctrl-click + aksi massal), page peek,
+           breadcrumb dropdown (lompat ke sibling), tombol back/forward,
+           full-text search + ranking + cuplikan (Postgres FTS, §25A),
+           filter pencarian (tipe halaman, rentang waktu, lokasi, urutan),
+           lompat ke blok dari hasil pencarian (scroll-to-block-anchor),
+           cheatsheet shortcut ("?")
 ```
 
 ## 71.10 Interaksi
 
 ```text
 ADA        resize sidebar, drop gambar untuk upload,
-           drag di dalam Excalidraw & React Flow (bawaan library)
-BELUM      drag blok untuk urut ulang, drag blok ke kolom, penanda garis jatuh,
-           multi-select blok + aksi massal, context menu klik-kanan,
+           drag di dalam Excalidraw & React Flow (bawaan library),
            drag halaman di sidebar, drag kartu kanban, urutkan baris & kolom tabel,
            geser lebar kolom, urutkan kartu gallery, seret event kalender,
-           seret batang timeline, resize gambar, urutkan tab view,
-           copy-paste blok dengan strukturnya
+           seret batang timeline, urutkan tab view
+BELUM      drag blok untuk urut ulang, drag blok ke kolom, penanda garis jatuh,
+           multi-select blok + aksi massal, context menu klik-kanan,
+           resize gambar, copy-paste blok dengan strukturnya
 ```
 
 ## 71.11 Import / Export
 
 ```text
-ADA        export JSON seluruh workspace
-BELUM      export Markdown, CSV (per view), HTML, PDF (lewat print), ZIP + lampiran
-           import Markdown, CSV -> database, Notion export ZIP, restore memoire.json
-           backup terjadwal lokal
+ADA        export JSON seluruh workspace, export Markdown & HTML per halaman,
+           export CSV per view (§30B.2), export ZIP workspace + lampiran (§30B.4),
+           PDF lewat route cetak (§30B.3, ADR-12), import Markdown (.md / .zip berisi .md),
+           import CSV -> database dengan koreksi tipe kolom (§30A.1, Sprint 24B),
+           import Notion export .zip dengan resolusi tautan internal best-effort (Sprint 24B),
+           restore memoire.json, backup manual + terjadwal harian dengan retensi 7 (§31)
+BELUM      import HTML, paste-markdown belum memakai parser import yang sama (§12A.5)
 DITUNDA    import dari Evernote / Google Docs lewat API mereka   -- butuh akun (§56.3)
 ```
 

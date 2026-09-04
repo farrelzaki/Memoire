@@ -281,11 +281,27 @@ export interface DatabaseQueryResult {
   computedAt: string;
 }
 
-/** A single search result from `GET /search` (§25). */
+/** Mirrors `@memoire/validation`'s `SearchHit` (§25A) — a single ranked result from `GET /search`. */
 export interface SearchHit {
   type: 'page' | 'block' | 'database' | 'row';
   pageId: string;
+  blockId?: string;
+  rowId?: string;
+  databaseId?: string;
   title: string;
+  breadcrumb: string[];
+  snippet: string | null;
+  rank: number;
+}
+
+/** Mirrors `@memoire/validation`'s `searchQuerySchema` (§25A) — params for `GET /search`. */
+export interface SearchQueryParams {
+  mode?: 'quick' | 'full';
+  type?: 'document' | 'database' | 'whiteboard' | 'diagram';
+  timeRange?: '7d' | '30d' | 'year';
+  locationPageId?: string;
+  sort?: 'relevance' | 'updated';
+  limit?: number;
 }
 
 /** Mirrors `page_canvases` (§10.11) — whiteboard/diagram content. */
@@ -297,4 +313,57 @@ export interface CanvasData {
   viewport: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type VersionKind = 'auto' | 'manual' | 'pre_restore' | 'pre_import';
+
+/** `GET /pages/:id/versions` list entry — no block content (§33A.1). */
+export interface VersionSummary {
+  id: string;
+  pageId: string;
+  version: number;
+  kind: VersionKind;
+  label: string | null;
+  title: string;
+  icon: string | null;
+  storageKey: string | null;
+  contentHash: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface VersionBlockSnapshot {
+  id: string;
+  type: string;
+  content: TiptapNode | null;
+  position: number;
+}
+
+/** `GET /versions/:id` — full content, resolved transparently from object storage if offloaded. */
+export interface VersionFullContent {
+  version: VersionSummary;
+  blocks: VersionBlockSnapshot[];
+}
+
+export type BlockChangeStatus = 'added' | 'removed' | 'moved' | 'changed';
+export interface WordDiffToken {
+  op: 'equal' | 'insert' | 'delete';
+  text: string;
+}
+export interface BlockDiffEntry {
+  blockId: string;
+  status: BlockChangeStatus;
+  type: string | null;
+  oldPosition: number | null;
+  newPosition: number | null;
+  wordDiff?: WordDiffToken[];
+}
+
+/** `GET /versions/diff` (§33A.5). */
+export interface VersionDiffResult {
+  from: VersionSummary;
+  to: VersionSummary;
+  titleChanged: boolean;
+  iconChanged: boolean;
+  blockDiffs: BlockDiffEntry[];
 }

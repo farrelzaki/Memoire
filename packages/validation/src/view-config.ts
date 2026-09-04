@@ -167,6 +167,13 @@ const boardExtraSchema = z.object({
   cardSize: z.enum(['small', 'medium', 'large']).default('medium'),
   cardPreview: cardPreviewSchema.default('none'),
   colorByGroup: z.boolean().default(true),
+  // Group keys with their cards hidden (Sprint 21) — `${groupOptionId}` or
+  // `${groupOptionId}:${subGroupOptionId}`, `'__empty__'` for the no-status
+  // column. Not pruned against live property ids like groupBy/subGroupBy —
+  // an option id living inside a select/status property's own config, not a
+  // property id itself, so it isn't in `liveIds` at all; a stale entry here
+  // just never matches a rendered group and is harmless.
+  collapsedGroups: z.array(z.string()).default([]),
 });
 
 const calendarExtraSchema = z.object({
@@ -183,6 +190,17 @@ const galleryExtraSchema = z.object({
   fitImage: z.boolean().default(true),
 });
 
+// No fields beyond `base` (§21B.1) — visible columns are `properties[].visible` like every other view.
+const listExtraSchema = z.object({});
+
+const timelineExtraSchema = z.object({
+  // Optional for the same defensive reason as boardExtraSchema.groupBy.
+  startProperty: uuid.optional(),
+  endProperty: uuid.optional(),
+  zoom: z.enum(['day', 'week', 'month', 'quarter', 'year']).default('week'),
+  showTable: z.boolean().default(true),
+});
+
 export type ViewType = (typeof viewTypes)[number];
 
 const viewConfigSchemas: Record<ViewType, z.ZodType> = {
@@ -190,6 +208,8 @@ const viewConfigSchemas: Record<ViewType, z.ZodType> = {
   board: baseViewConfigSchema.merge(boardExtraSchema),
   calendar: baseViewConfigSchema.merge(calendarExtraSchema),
   gallery: baseViewConfigSchema.merge(galleryExtraSchema),
+  list: baseViewConfigSchema.merge(listExtraSchema),
+  timeline: baseViewConfigSchema.merge(timelineExtraSchema),
 };
 
 /** The validated shape of `database_views.config` for a given view type. */
@@ -291,7 +311,7 @@ export function migrateViewConfig(
   };
 
   // Per-view-type fields that reference a single property by id (§21A.3).
-  for (const key of ['groupBy', 'subGroupBy', 'dateProperty', 'endDateProperty']) {
+  for (const key of ['groupBy', 'subGroupBy', 'dateProperty', 'endDateProperty', 'startProperty', 'endProperty']) {
     const value = result[key];
     if (typeof value === 'string' && !liveIds.has(value)) delete result[key];
   }

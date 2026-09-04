@@ -13,6 +13,8 @@ export {
   updateViewSchema,
   moveViewSchema,
   createDatabaseSchema,
+  reorderSchema,
+  reorderIntoGroupSchema,
   type CreatePropertyDto,
   type UpdatePropertyDto,
   type CreateRowDto,
@@ -21,4 +23,6 @@ export {
   type UpdateViewDto,
   type MoveViewDto,
   type CreateDatabaseDto,
+  type ReorderDto,
+  type ReorderIntoGroupDto,
 } from '@memoire/validation';

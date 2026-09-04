@@ -7,6 +7,8 @@ import { RowPropertiesPanel } from '@/features/database/row-properties-panel';
 import { BacklinksPanel } from '@/features/shell/backlinks-panel';
 import { PageHeader } from '@/features/shell/page-header';
 import { Topbar } from '@/features/shell/topbar';
+import { useRecordRecent } from '@/hooks/use-record-recent';
+import { useScrollToBlockAnchor } from '@/hooks/use-scroll-to-block-anchor';
 import { api, type UpdatePageInput } from '@/lib/api';
 
 /**
@@ -33,6 +35,9 @@ export default function PageDetail() {
       queryClient.invalidateQueries({ queryKey: ['pages'] });
     },
   });
+
+  useRecordRecent(page);
+  useScrollToBlockAnchor(page?.id);
 
   if (isLoading) {
     return <div className="p-10 text-sm text-zinc-400 dark:text-zinc-500">Loading…</div>;

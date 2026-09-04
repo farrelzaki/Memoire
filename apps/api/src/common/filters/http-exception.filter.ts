@@ -24,6 +24,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     let code = 'INTERNAL_ERROR';
     let message = 'Internal server error';
+    if (!(exception instanceof HttpException)) {
+      console.error('DEBUG UNCAUGHT NAME', (exception as Error)?.name, (exception as Error)?.message);
+      console.error('DEBUG UNCAUGHT FULL', JSON.stringify(exception, Object.getOwnPropertyNames(exception as object)));
+    }
 
     if (exception instanceof HttpException) {
       const res = exception.getResponse();

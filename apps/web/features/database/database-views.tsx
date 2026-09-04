@@ -1,7 +1,11 @@
 'use client';
 
+import { DndContext, useDraggable, useDroppable, type DragEndEvent } from '@dnd-kit/core';
+import { neighborsAfterDrag, useDragSensors } from '@/lib/dnd';
+import { SortableContext, useSortable, verticalListSortingStrategy, horizontalListSortingStrategy, rectSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import type {
   CalculationId,
@@ -28,6 +32,14 @@ function optionsOf(property: DatabaseProperty): Option[] {
 function newOption(name: string, index: number): Option {
   return { id: crypto.randomUUID(), name, color: OPTION_COLORS[index % OPTION_COLORS.length] };
 }
+
+/**
+ * From dnd-kit's `active`/`over` ids after a drag, the sibling ids to send
+ * as `beforeId`/`afterId` to a `.../reorder` endpoint (§19A.4, Sprint 21).
+ * `orderedIds` is the list's rendered order *before* the drag.
+ */
+// Promoted to @/lib/dnd in Sprint 22 (the sidebar needs them too, and isn't a database feature).
+export { neighborsAfterDrag, useDragSensors };
 
 export function titleProperty(properties: DatabaseProperty[]): DatabaseProperty | undefined {
   return properties.find((p) => p.type === 'title') ?? properties[0];
@@ -558,6 +570,104 @@ const CALCULATION_LABELS: Record<CalculationId, string> = {
   percent_unchecked: '% unchecked',
 };
 
+/** A `<th>` that's both sort-clickable and drag-reorderable, plus a manual (non-dnd-kit) pointer-drag width resize handle on its right edge. */
+function SortableColumnHeader({
+  property,
+  sort,
+  toggleSort,
+  onResizeColumn,
+  width,
+}: {
+  property: DatabaseProperty;
+  sort: Sort | null;
+  toggleSort: (id: string) => void;
+  onResizeColumn?: (propertyId: string, width: number) => void;
+  width?: number;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: property.id });
+  const resizeStart = useRef<{ x: number; width: number } | null>(null);
+
+  const onResizePointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeStart.current = { x: e.clientX, width: width ?? 160 };
+    const onMove = (ev: PointerEvent) => {
+      if (!resizeStart.current) return;
+      const next = Math.max(80, resizeStart.current.width + (ev.clientX - resizeStart.current.x));
+      onResizeColumn?.(property.id, next);
+    };
+    const onUp = () => {
+      resizeStart.current = null;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
+  return (
+    <th
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        width,
+      }}
+      className="relative border-r border-zinc-200 px-2 py-1.5 font-medium dark:border-zinc-800"
+    >
+      <span {...attributes} {...listeners} className="mr-1 cursor-grab text-zinc-300 hover:text-zinc-500" title="Drag to reorder">
+        ⠿
+      </span>
+      <button
+        onClick={() => toggleSort(property.id)}
+        className="inline-flex items-center gap-1 text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
+      >
+        {property.name}
+        {sort?.propertyId === property.id ? (sort.direction === 'asc' ? '↑' : '↓') : ''}
+      </button>
+      {onResizeColumn && (
+        <div
+          onPointerDown={onResizePointerDown}
+          className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-zinc-300 dark:hover:bg-zinc-600"
+        />
+      )}
+    </th>
+  );
+}
+
+/** A `<tr>` that's drag-reorderable via a handle cell — disabled while an explicit sort is active, since a manual position write wouldn't visibly move anything under one. */
+function SortableRow({
+  row,
+  dragDisabled,
+  children,
+}: {
+  row: DatabaseRow;
+  dragDisabled: boolean;
+  children: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: row.id,
+    disabled: dragDisabled,
+  });
+  return (
+    <tr
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      className="group border-b border-zinc-100 last:border-0 dark:border-zinc-800"
+    >
+      <td className="w-4 px-0.5 text-center">
+        {!dragDisabled && (
+          <span {...attributes} {...listeners} className="cursor-grab text-xs text-zinc-300 opacity-0 hover:text-zinc-500 group-hover:opacity-100" title="Drag to reorder">
+            ⠿
+          </span>
+        )}
+      </td>
+      {children}
+    </tr>
+  );
+}
+
 function formatCalculation(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(2);
@@ -580,6 +690,10 @@ export function TableView({
   rowHeight = 'short',
   wrapCells = false,
   onOpenRow,
+  onReorderRow,
+  onReorderProperty,
+  onResizeColumn,
+  columnWidths,
 }: {
   properties: DatabaseProperty[];
   rows: DatabaseRow[];
@@ -598,9 +712,30 @@ export function TableView({
   wrapCells?: boolean;
   /** Opens the row as a peek/full page per `config.openAs` (§20D.6). */
   onOpenRow?: (row: DatabaseRow) => void;
+  /** Drag-drop row/column reorder (§19A.4, Sprint 21) — omit to render without drag handles. */
+  onReorderRow?: (id: string, beforeId: string | null, afterId: string | null) => void;
+  onReorderProperty?: (id: string, beforeId: string | null, afterId: string | null) => void;
+  onResizeColumn?: (propertyId: string, width: number) => void;
+  columnWidths?: Record<string, number>;
 }) {
   const [addingColumn, setAddingColumn] = useState(false);
   const cellPadY = ROW_HEIGHT_CLASS[rowHeight] ?? ROW_HEIGHT_CLASS.short;
+  const dragSensors = useDragSensors();
+  const rowIds = rows.map((r) => r.id);
+  const propertyIds = properties.map((p) => p.id);
+  const rowDragDisabled = sort !== null;
+
+  const onRowDragEnd = (e: DragEndEvent) => {
+    if (!onReorderRow || !e.over || e.active.id === e.over.id) return;
+    const { beforeId, afterId } = neighborsAfterDrag(rowIds, String(e.active.id), String(e.over.id));
+    onReorderRow(String(e.active.id), beforeId, afterId);
+  };
+
+  const onColumnDragEnd = (e: DragEndEvent) => {
+    if (!onReorderProperty || !e.over || e.active.id === e.over.id) return;
+    const { beforeId, afterId } = neighborsAfterDrag(propertyIds, String(e.active.id), String(e.over.id));
+    onReorderProperty(String(e.active.id), beforeId, afterId);
+  };
 
   return (
     <div>
@@ -608,70 +743,94 @@ export function TableView({
         <table className="w-full border-collapse">
           <thead>
             <tr className="border-b border-zinc-200 bg-zinc-50 text-left dark:border-zinc-800 dark:bg-zinc-900">
+              <th className="w-4" />
               {onOpenRow && <th className="w-6" />}
-              {properties.map((p) => (
-                <th key={p.id} className="border-r border-zinc-200 px-2 py-1.5 font-medium dark:border-zinc-800">
-                  <button
-                    onClick={() => toggleSort(p.id)}
-                    className="flex items-center gap-1 text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
-                  >
-                    {p.name}
-                    {sort?.propertyId === p.id ? (sort.direction === 'asc' ? '↑' : '↓') : ''}
-                  </button>
-                </th>
-              ))}
+              {onReorderProperty ? (
+                <DndContext sensors={dragSensors} onDragEnd={onColumnDragEnd}>
+                  <SortableContext items={propertyIds} strategy={horizontalListSortingStrategy}>
+                    {properties.map((p) => (
+                      <SortableColumnHeader
+                        key={p.id}
+                        property={p}
+                        sort={sort}
+                        toggleSort={toggleSort}
+                        onResizeColumn={onResizeColumn}
+                        width={columnWidths?.[p.id]}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
+              ) : (
+                properties.map((p) => (
+                  <th key={p.id} className="border-r border-zinc-200 px-2 py-1.5 font-medium dark:border-zinc-800" style={{ width: columnWidths?.[p.id] }}>
+                    <button
+                      onClick={() => toggleSort(p.id)}
+                      className="flex items-center gap-1 text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
+                    >
+                      {p.name}
+                      {sort?.propertyId === p.id ? (sort.direction === 'asc' ? '↑' : '↓') : ''}
+                    </button>
+                  </th>
+                ))
+              )}
               <th className="w-10 px-2 py-1.5" />
             </tr>
           </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id} className="group border-b border-zinc-100 last:border-0 dark:border-zinc-800">
-                {onOpenRow && (
-                  <td className="w-6 px-0.5 text-center">
-                    <button
-                      onClick={() => onOpenRow(row)}
-                      className="text-xs text-zinc-300 opacity-0 hover:text-zinc-600 group-hover:opacity-100 dark:hover:text-zinc-300"
-                      title="Open row"
-                    >
-                      ⤢
-                    </button>
-                  </td>
-                )}
-                {properties.map((p) => (
-                  <td
-                    key={p.id}
-                    className={`border-r border-zinc-100 px-1 dark:border-zinc-800 ${cellPadY} ${wrapCells ? 'whitespace-normal break-words' : 'whitespace-nowrap'}`}
-                  >
-                    <Cell
-                      property={p}
-                      value={cellValue(row, p)}
-                      onCommit={(value) => commitCell(row, p, value)}
-                      rowId={row.id}
-                    />
-                  </td>
+          <DndContext sensors={dragSensors} onDragEnd={onRowDragEnd}>
+            <SortableContext items={rowIds} strategy={verticalListSortingStrategy}>
+              <tbody>
+                {rows.map((row) => (
+                  <SortableRow key={row.id} row={row} dragDisabled={rowDragDisabled || !onReorderRow}>
+                    {onOpenRow && (
+                      <td className="w-6 px-0.5 text-center">
+                        <button
+                          onClick={() => onOpenRow(row)}
+                          className="text-xs text-zinc-300 opacity-0 hover:text-zinc-600 group-hover:opacity-100 dark:hover:text-zinc-300"
+                          title="Open row"
+                        >
+                          ⤢
+                        </button>
+                      </td>
+                    )}
+                    {properties.map((p) => (
+                      <td
+                        key={p.id}
+                        className={`border-r border-zinc-100 px-1 dark:border-zinc-800 ${cellPadY} ${wrapCells ? 'whitespace-normal break-words' : 'whitespace-nowrap'}`}
+                        style={{ width: columnWidths?.[p.id] }}
+                      >
+                        <Cell
+                          property={p}
+                          value={cellValue(row, p)}
+                          onCommit={(value) => commitCell(row, p, value)}
+                          rowId={row.id}
+                        />
+                      </td>
+                    ))}
+                    <td className="px-2 py-1 text-right">
+                      <button
+                        onClick={() => deleteRow(row.id)}
+                        className="text-xs text-zinc-300 hover:text-red-500"
+                        title="Delete row"
+                      >
+                        ×
+                      </button>
+                    </td>
+                  </SortableRow>
                 ))}
-                <td className="px-2 py-1 text-right">
-                  <button
-                    onClick={() => deleteRow(row.id)}
-                    className="text-xs text-zinc-300 hover:text-red-500"
-                    title="Delete row"
-                  >
-                    ×
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={properties.length + 1 + (onOpenRow ? 1 : 0)} className="px-3 py-6 text-center text-zinc-400 dark:text-zinc-500">
-                  No rows yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={properties.length + 2 + (onOpenRow ? 1 : 0)} className="px-3 py-6 text-center text-zinc-400 dark:text-zinc-500">
+                      No rows yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </SortableContext>
+          </DndContext>
           {calculations && onSetCalculation && (
             <tfoot>
               <tr className="border-t border-zinc-200 bg-zinc-50 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900">
+                <td />
                 {onOpenRow && <td />}
                 {properties.map((p) => {
                   const available = PropertyTypeRegistry.get(p.type)?.calculations ?? [];
@@ -726,79 +885,353 @@ export function TableView({
   );
 }
 
+const EMPTY_GROUP_KEY = '__empty__';
+
+/** Board group/sub-group key (§21A, Sprint 21) — `optionId` alone at the top level, `optionId:subOptionId` when sub-grouped. `null` (no status) maps to `EMPTY_GROUP_KEY`. */
+export function boardGroupKey(optionId: string | null, subOptionId?: string | null): string {
+  const base = optionId ?? EMPTY_GROUP_KEY;
+  return subOptionId === undefined ? base : `${base}:${subOptionId ?? EMPTY_GROUP_KEY}`;
+}
+
+function BoardCard({
+  row,
+  properties,
+  groupBy,
+  options,
+  commitCell,
+  onOpenRow,
+}: {
+  row: DatabaseRow;
+  properties: DatabaseProperty[];
+  groupBy: DatabaseProperty;
+  options: Option[];
+  commitCell: CommitCell;
+  onOpenRow?: (row: DatabaseRow) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      className="rounded border border-zinc-200 bg-white p-2 text-sm dark:border-zinc-700 dark:bg-zinc-800"
+      {...attributes}
+      {...listeners}
+    >
+      <button
+        onClick={() => onOpenRow?.(row)}
+        className="text-left font-medium text-zinc-800 hover:underline dark:text-zinc-100"
+      >
+        {rowTitle(properties, row) || 'Untitled'}
+      </button>
+      {/* Keyboard/accessibility fallback alongside drag (§19A.4) — stop the pointerdown from also arming a drag. */}
+      <select
+        value={typeof row.values?.[groupBy.id] === 'string' ? (row.values[groupBy.id] as string) : ''}
+        onChange={(e) => commitCell(row, groupBy, e.target.value || null)}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="mt-1 w-full rounded border border-zinc-200 bg-transparent px-1 py-0.5 text-xs text-zinc-600 dark:border-zinc-600 dark:text-zinc-300"
+      >
+        <option value="">—</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+/** A board column — droppable (for dropping onto an otherwise-empty column) and, when not collapsed, a `SortableContext` over every row it holds (across sub-groups, so drag order spans sub-group boundaries within one column). */
+function BoardColumn({
+  columnId,
+  title,
+  count,
+  collapsed,
+  onToggleCollapse,
+  rowIds,
+  onAddCard,
+  children,
+}: {
+  columnId: string;
+  title: React.ReactNode;
+  count: number;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+  rowIds: string[];
+  onAddCard: () => void;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: columnId });
+  return (
+    <div className="w-56 shrink-0 rounded border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+      <button
+        onClick={onToggleCollapse}
+        className="flex w-full items-center justify-between border-b border-zinc-200 px-2 py-1.5 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400"
+      >
+        <span className="flex items-center gap-1">
+          <span className="text-zinc-400">{collapsed ? '▸' : '▾'}</span>
+          {title}
+        </span>
+        <span>{count}</span>
+      </button>
+      {!collapsed && (
+        <div ref={setNodeRef} className={`flex flex-col gap-1.5 p-1.5 ${isOver ? 'bg-zinc-100 dark:bg-zinc-800' : ''}`}>
+          <SortableContext items={rowIds} strategy={verticalListSortingStrategy}>
+            {children}
+          </SortableContext>
+          <button onClick={onAddCard} className="text-left text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200">
+            + New
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function BoardView({
   properties,
   rows,
   groupBy,
+  subGroupBy,
   groups,
   commitCell,
   createRow,
   onOpenRow,
+  collapsedGroups = [],
+  onToggleCollapse,
+  onReorderRow,
+  onReorderRowIntoGroup,
 }: {
   properties: DatabaseProperty[];
   rows: DatabaseRow[];
   groupBy: DatabaseProperty;
+  subGroupBy?: DatabaseProperty;
   groups?: DatabaseQueryGroup[] | null;
   commitCell: CommitCell;
   createRow: (values?: Record<string, unknown>) => void;
   onOpenRow?: (row: DatabaseRow) => void;
+  collapsedGroups?: string[];
+  onToggleCollapse?: (key: string) => void;
+  onReorderRow?: (id: string, beforeId: string | null, afterId: string | null) => void;
+  onReorderRowIntoGroup?: (id: string, groupPropertyId: string, groupValue: unknown, beforeId: string | null, afterId: string | null) => void;
 }) {
   const options = optionsOf(groupBy);
   const columns = [...options, null];
   const groupsByKey = new Map((groups ?? []).map((g) => [g.key, g]));
+  const subOptions = subGroupBy ? optionsOf(subGroupBy) : [];
+  const collapsedSet = new Set(collapsedGroups);
+  const dragSensors = useDragSensors();
 
-  return (
+  // columnId (boardGroupKey at the TOP level, ignoring sub-group) -> every row it holds, in render order — the id
+  // list a column's SortableContext + cross-column drag detection both key off.
+  const rowsByColumn = new Map<string, DatabaseRow[]>();
+  for (const option of columns) {
+    const optionId = option?.id ?? null;
+    const colRows = rows.filter((r) => {
+      const v = r.values?.[groupBy.id];
+      return optionId === null ? v === null || v === undefined || v === '' : v === optionId;
+    });
+    rowsByColumn.set(boardGroupKey(optionId), colRows);
+  }
+
+  const findColumnOfRow = (rowId: string): string | undefined => {
+    for (const [columnId, colRows] of rowsByColumn) {
+      if (colRows.some((r) => r.id === rowId)) return columnId;
+    }
+    return undefined;
+  };
+
+  const onDragEnd = (e: DragEndEvent) => {
+    if (!onReorderRow || !e.over) return;
+    const activeId = String(e.active.id);
+    const overId = String(e.over.id);
+    if (activeId === overId) return;
+
+    const sourceColumn = findColumnOfRow(activeId);
+    const targetColumn = rowsByColumn.has(overId) ? overId : findColumnOfRow(overId);
+    if (!sourceColumn || !targetColumn) return;
+
+    if (targetColumn === sourceColumn) {
+      const ids = rowsByColumn.get(sourceColumn)!.map((r) => r.id);
+      const { beforeId, afterId } = neighborsAfterDrag(ids, activeId, overId);
+      onReorderRow(activeId, beforeId, afterId);
+      return;
+    }
+
+    if (!onReorderRowIntoGroup) return;
+    const targetRows = rowsByColumn.get(targetColumn) ?? [];
+    const targetOptionId = targetColumn === EMPTY_GROUP_KEY ? null : targetColumn;
+    const ids = targetRows.map((r) => r.id);
+    const overIsRow = ids.includes(overId);
+    const { beforeId, afterId } = overIsRow
+      ? neighborsAfterDrag(ids, activeId, overId)
+      : { beforeId: ids.length > 0 ? ids[ids.length - 1] : null, afterId: null };
+    onReorderRowIntoGroup(activeId, groupBy.id, targetOptionId, beforeId, afterId);
+  };
+
+  const board = (
     <div className="flex gap-3 overflow-x-auto pb-2">
       {columns.map((option) => {
         const optionId = option?.id ?? null;
-        const colRows = rows.filter((r) => {
-          const v = r.values?.[groupBy.id];
-          return optionId === null ? v === null || v === undefined || v === '' : v === optionId;
-        });
+        const columnId = boardGroupKey(optionId);
+        const colRows = rowsByColumn.get(columnId) ?? [];
         const groupSummary = groupsByKey.get(optionId);
+        const columnCollapsed = collapsedSet.has(columnId);
+
+        const subSections = subGroupBy
+          ? [...subOptions, null].map((subOption) => {
+              const subOptionId = subOption?.id ?? null;
+              const subRows = colRows.filter((r) => {
+                const v = r.values?.[subGroupBy.id];
+                return subOptionId === null ? v === null || v === undefined || v === '' : v === subOptionId;
+              });
+              return { subOption, subOptionId, subRows, key: boardGroupKey(optionId, subOptionId) };
+            })
+          : [{ subOption: null, subOptionId: undefined, subRows: colRows, key: columnId }];
 
         return (
-          <div
-            key={optionId ?? '__empty__'}
-            className="w-56 shrink-0 rounded border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900"
+          <BoardColumn
+            key={columnId}
+            columnId={columnId}
+            title={option ? <OptionChip option={option} /> : <span>No status</span>}
+            count={groupSummary?.count ?? colRows.length}
+            collapsed={columnCollapsed}
+            onToggleCollapse={() => onToggleCollapse?.(columnId)}
+            rowIds={colRows.map((r) => r.id)}
+            onAddCard={() => createRow(optionId ? { [groupBy.id]: optionId } : {})}
           >
-            <div className="flex items-center justify-between border-b border-zinc-200 px-2 py-1.5 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-              <span>{option ? <OptionChip option={option} /> : 'No status'}</span>
-              <span>{groupSummary?.count ?? colRows.length}</span>
-            </div>
-            <div className="flex flex-col gap-1.5 p-1.5">
-              {colRows.map((row) => (
-                <div key={row.id} className="rounded border border-zinc-200 bg-white p-2 text-sm dark:border-zinc-700 dark:bg-zinc-800">
-                  <button
-                    onClick={() => onOpenRow?.(row)}
-                    className="text-left font-medium text-zinc-800 hover:underline dark:text-zinc-100"
-                  >
-                    {rowTitle(properties, row) || 'Untitled'}
-                  </button>
-                  <select
-                    value={typeof row.values?.[groupBy.id] === 'string' ? (row.values[groupBy.id] as string) : ''}
-                    onChange={(e) => commitCell(row, groupBy, e.target.value || null)}
-                    className="mt-1 w-full rounded border border-zinc-200 bg-transparent px-1 py-0.5 text-xs text-zinc-600 dark:border-zinc-600 dark:text-zinc-300"
-                  >
-                    <option value="">—</option>
-                    {options.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.name}
-                      </option>
+            {subSections.map((section) => (
+              <div key={section.key}>
+                {subGroupBy && (
+                  <div className="mb-1 flex items-center justify-between px-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+                    <button
+                      onClick={() => onToggleCollapse?.(section.key)}
+                      className="flex items-center gap-1 hover:text-zinc-600 dark:hover:text-zinc-300"
+                    >
+                      <span>{collapsedSet.has(section.key) ? '▸' : '▾'}</span>
+                      {section.subOption ? <OptionChip option={section.subOption} /> : <span>No {subGroupBy.name}</span>}
+                    </button>
+                    <span>{section.subRows.length}</span>
+                  </div>
+                )}
+                {!collapsedSet.has(section.key) && (
+                  <div className="mb-1.5 flex flex-col gap-1.5">
+                    {section.subRows.map((row) => (
+                      <BoardCard
+                        key={row.id}
+                        row={row}
+                        properties={properties}
+                        groupBy={groupBy}
+                        options={options}
+                        commitCell={commitCell}
+                        onOpenRow={onOpenRow}
+                      />
                     ))}
-                  </select>
-                </div>
-              ))}
-              <button
-                onClick={() => createRow(optionId ? { [groupBy.id]: optionId } : {})}
-                className="text-left text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
-              >
-                + New
-              </button>
-            </div>
-          </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </BoardColumn>
         );
       })}
+    </div>
+  );
+
+  return onReorderRow ? (
+    <DndContext sensors={dragSensors} onDragEnd={onDragEnd}>
+      {board}
+    </DndContext>
+  ) : (
+    board
+  );
+}
+
+export function toDateOnly(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function parseCalendarDate(value: unknown): Date | null {
+  if (typeof value !== 'string') return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export function sameDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+/** One event chip — draggable to another day (§21B, Sprint 21). Not sortable: no within-day order, only cross-day. */
+function CalendarChip({
+  row,
+  label,
+  resizable,
+  onResizeStart,
+}: {
+  row: DatabaseRow;
+  label: string;
+  resizable: boolean;
+  onResizeStart?: (e: React.PointerEvent) => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: row.id });
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className={`relative mt-0.5 cursor-grab truncate rounded bg-zinc-100 px-1 py-0.5 pr-2 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 ${isDragging ? 'opacity-40' : ''}`}
+    >
+      {label}
+      {resizable && (
+        <span
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onResizeStart?.(e);
+          }}
+          className="absolute right-0 top-0 h-full w-1.5 cursor-ew-resize hover:bg-zinc-300 dark:hover:bg-zinc-600"
+        />
+      )}
+    </div>
+  );
+}
+
+function CalendarDayCell({
+  properties,
+  date,
+  rows,
+  isCurrentMonth,
+  onCreateRow,
+  resizable,
+  onResizeStart,
+}: {
+  properties: DatabaseProperty[];
+  date: Date;
+  rows: DatabaseRow[];
+  isCurrentMonth: boolean;
+  onCreateRow: () => void;
+  resizable: boolean;
+  onResizeStart?: (row: DatabaseRow, e: React.PointerEvent) => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: toDateOnly(date) });
+  return (
+    <div
+      ref={setNodeRef}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCreateRow();
+      }}
+      className={`min-h-16 cursor-pointer border-b border-r border-zinc-100 p-1 text-xs dark:border-zinc-800 ${
+        isOver ? 'bg-zinc-100 dark:bg-zinc-800' : ''
+      } ${isCurrentMonth ? '' : 'text-zinc-300 dark:text-zinc-600'}`}
+    >
+      <div className="pointer-events-none text-zinc-400 dark:text-zinc-500">{date.getDate()}</div>
+      {rows.map((row) => (
+        <CalendarChip
+          key={row.id}
+          row={row}
+          label={rowTitle(properties, row) || 'Untitled'}
+          resizable={resizable}
+          onResizeStart={(e) => onResizeStart?.(row, e)}
+        />
+      ))}
     </div>
   );
 }
@@ -807,83 +1240,195 @@ export function CalendarView({
   properties,
   rows,
   dateProperty,
+  endDateProperty,
+  span = 'month',
+  showWeekends = true,
+  commitCell,
+  createRow,
+  onChangeSpan,
 }: {
   properties: DatabaseProperty[];
   rows: DatabaseRow[];
   dateProperty: DatabaseProperty;
+  endDateProperty?: DatabaseProperty;
+  span?: 'month' | 'week';
+  showWeekends?: boolean;
+  commitCell?: CommitCell;
+  createRow?: (values?: Record<string, unknown>) => void;
+  onChangeSpan?: (span: 'month' | 'week') => void;
 }) {
   const now = new Date();
-  const [month, setMonth] = useState(() => new Date(now.getFullYear(), now.getMonth(), 1));
+  const [anchor, setAnchor] = useState(() => new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+  const resizeRow = useRef<{ row: DatabaseRow; startX: number; originalEnd: Date } | null>(null);
+  const dragSensors = useDragSensors();
 
-  const year = month.getFullYear();
-  const monthIndex = month.getMonth();
-  const totalDays = new Date(year, monthIndex + 1, 0).getDate();
-  const startWeekday = new Date(year, monthIndex, 1).getDay();
+  const year = anchor.getFullYear();
+  const monthIndex = anchor.getMonth();
 
-  const byDay = new Map<number, DatabaseRow[]>();
+  const weekDayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  // `showWeekends` only thins the week view's columns — a month grid stays a
+  // full 7 columns so week alignment never has to be recomputed per row.
+  const visibleWeekdays = span === 'week' && !showWeekends ? [1, 2, 3, 4, 5, 6] : [0, 1, 2, 3, 4, 5, 6];
+
+  let days: Array<Date | null>;
+  if (span === 'week') {
+    const weekStart = new Date(anchor);
+    weekStart.setDate(anchor.getDate() - anchor.getDay());
+    days = visibleWeekdays.map((offset) => {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + offset);
+      return d;
+    });
+  } else {
+    const totalDays = new Date(year, monthIndex + 1, 0).getDate();
+    const startWeekday = new Date(year, monthIndex, 1).getDay();
+    const monthDays: Date[] = [];
+    for (let d = 1; d <= totalDays; d++) monthDays.push(new Date(year, monthIndex, d));
+    days = [...Array(startWeekday).fill(null), ...monthDays];
+  }
+
+  const byDay = new Map<string, DatabaseRow[]>();
   for (const row of rows) {
-    const v = row.values?.[dateProperty.id];
-    if (typeof v !== 'string') continue;
-    const d = new Date(v);
-    if (d.getFullYear() === year && d.getMonth() === monthIndex) {
-      const day = d.getDate();
-      byDay.set(day, [...(byDay.get(day) ?? []), row]);
+    const start = parseCalendarDate(row.values?.[dateProperty.id]);
+    if (!start) continue;
+    const end = endDateProperty ? (parseCalendarDate(row.values?.[endDateProperty.id]) ?? start) : start;
+    const cursor = new Date(start);
+    while (cursor.getTime() <= end.getTime()) {
+      const key = toDateOnly(cursor);
+      byDay.set(key, [...(byDay.get(key) ?? []), row]);
+      cursor.setDate(cursor.getDate() + 1);
     }
   }
 
-  const cells: Array<number | null> = [];
-  for (let i = 0; i < startWeekday; i++) cells.push(null);
-  for (let d = 1; d <= totalDays; d++) cells.push(d);
+  const step = (amount: number) => {
+    const next = new Date(anchor);
+    if (span === 'week') next.setDate(anchor.getDate() + amount * 7);
+    else next.setMonth(anchor.getMonth() + amount);
+    setAnchor(next);
+  };
+
+  const onResizePointerMove = (e: PointerEvent) => {
+    if (!resizeRow.current || !endDateProperty || !commitCell) return;
+    const deltaDays = Math.round((e.clientX - resizeRow.current.startX) / 24);
+    if (deltaDays === 0) return;
+    const nextEnd = new Date(resizeRow.current.originalEnd);
+    nextEnd.setDate(nextEnd.getDate() + deltaDays);
+    commitCell(resizeRow.current.row, endDateProperty, toDateOnly(nextEnd));
+  };
+  const onResizePointerUp = () => {
+    resizeRow.current = null;
+    window.removeEventListener('pointermove', onResizePointerMove);
+    window.removeEventListener('pointerup', onResizePointerUp);
+  };
+  const startResize = (row: DatabaseRow, e: React.PointerEvent) => {
+    if (!endDateProperty) return;
+    const originalEnd = parseCalendarDate(row.values?.[endDateProperty.id]) ?? parseCalendarDate(row.values?.[dateProperty.id]);
+    if (!originalEnd) return;
+    resizeRow.current = { row, startX: e.clientX, originalEnd };
+    window.addEventListener('pointermove', onResizePointerMove);
+    window.addEventListener('pointerup', onResizePointerUp);
+  };
+
+  const onDragEnd = (e: DragEndEvent) => {
+    if (!e.over || !commitCell) return;
+    const row = rows.find((r) => r.id === String(e.active.id));
+    if (!row) return;
+    const start = parseCalendarDate(row.values?.[dateProperty.id]);
+    const targetDate = new Date(String(e.over.id));
+    if (Number.isNaN(targetDate.getTime())) return;
+    if (start && sameDay(start, targetDate)) return;
+
+    commitCell(row, dateProperty, toDateOnly(targetDate));
+    if (endDateProperty && start) {
+      const end = parseCalendarDate(row.values?.[endDateProperty.id]);
+      if (end) {
+        const durationDays = daysBetween(start, end);
+        const newEnd = new Date(targetDate);
+        newEnd.setDate(newEnd.getDate() + durationDays);
+        commitCell(row, endDateProperty, toDateOnly(newEnd));
+      }
+    }
+  };
+
+  const gridStyle = { display: 'grid', gridTemplateColumns: `repeat(${visibleWeekdays.length}, minmax(0, 1fr))` };
+  const grid = (
+    <div style={gridStyle}>
+      {days.map((date, i) =>
+        date === null ? (
+          <div key={i} className="min-h-16 border-b border-r border-zinc-100 dark:border-zinc-800" />
+        ) : (
+          <CalendarDayCell
+            key={toDateOnly(date)}
+            properties={properties}
+            date={date}
+            rows={byDay.get(toDateOnly(date)) ?? []}
+            isCurrentMonth={span === 'week' || date.getMonth() === monthIndex}
+            onCreateRow={() => createRow?.({ [dateProperty.id]: toDateOnly(date) })}
+            resizable={Boolean(endDateProperty && commitCell)}
+            onResizeStart={startResize}
+          />
+        ),
+      )}
+    </div>
+  );
 
   return (
     <div className="overflow-hidden rounded border border-zinc-200 dark:border-zinc-800">
       <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
-        <button
-          onClick={() => setMonth(new Date(year, monthIndex - 1, 1))}
-          className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-        >
+        <button onClick={() => step(-1)} className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
           ‹
         </button>
         <span className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-          {month.toLocaleString('en', { month: 'long', year: 'numeric' })}
+          {span === 'week'
+            ? `Week of ${anchor.toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}`
+            : anchor.toLocaleString('en', { month: 'long', year: 'numeric' })}
         </span>
-        <button
-          onClick={() => setMonth(new Date(year, monthIndex + 1, 1))}
-          className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-        >
-          ›
-        </button>
+        <div className="flex items-center gap-2">
+          {onChangeSpan && (
+            <button
+              onClick={() => onChangeSpan(span === 'month' ? 'week' : 'month')}
+              className="rounded border border-zinc-200 px-1.5 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            >
+              {span === 'month' ? 'Week view' : 'Month view'}
+            </button>
+          )}
+          <button onClick={() => step(1)} className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
+            ›
+          </button>
+        </div>
       </div>
-      <div className="grid grid-cols-7 border-b border-zinc-200 text-center text-xs text-zinc-400 dark:border-zinc-800">
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-          <div key={d} className="py-1">
-            {d}
+      <div className="border-b border-zinc-200 text-center text-xs text-zinc-400 dark:border-zinc-800" style={gridStyle}>
+        {visibleWeekdays.map((w) => (
+          <div key={w} className="py-1">
+            {weekDayLabels[w]}
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-7">
-        {cells.map((day, i) => (
-          <div
-            key={i}
-            className="min-h-16 border-b border-r border-zinc-100 p-1 text-xs dark:border-zinc-800"
-          >
-            {day !== null && (
-              <>
-                <div className="text-zinc-400 dark:text-zinc-500">{day}</div>
-                {(byDay.get(day) ?? []).map((row) => (
-                  <div
-                    key={row.id}
-                    className="mt-0.5 truncate rounded bg-zinc-100 px-1 py-0.5 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
-                  >
-                    {rowTitle(properties, row)}
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-        ))}
-      </div>
+      {commitCell ? (
+        <DndContext sensors={dragSensors} onDragEnd={onDragEnd}>
+          {grid}
+        </DndContext>
+      ) : (
+        grid
+      )}
     </div>
+  );
+}
+
+/** A gallery/list card that's drag-reorderable — shares the same row `position` as every other view (§19A.4). */
+function SortableGalleryCard({ id, onClick, children }: { id: string; onClick: () => void; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <button
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      onClick={onClick}
+      className="min-h-20 rounded border border-zinc-200 bg-zinc-50 p-3 text-left hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
+      {...attributes}
+      {...listeners}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -892,31 +1437,241 @@ export function GalleryView({
   rows,
   createRow,
   onOpenRow,
+  onReorderRow,
 }: {
   properties: DatabaseProperty[];
   rows: DatabaseRow[];
   createRow: () => void;
   onOpenRow?: (row: DatabaseRow) => void;
+  onReorderRow?: (id: string, beforeId: string | null, afterId: string | null) => void;
 }) {
+  const dragSensors = useDragSensors();
+  const rowIds = rows.map((r) => r.id);
+
+  const card = (row: DatabaseRow) => (
+    <div className="text-sm font-medium text-zinc-800 dark:text-zinc-100">{rowTitle(properties, row) || 'Untitled'}</div>
+  );
+
+  const grid = onReorderRow ? (
+    <DndContext
+      sensors={dragSensors}
+      onDragEnd={(e) => {
+        if (!e.over || e.active.id === e.over.id) return;
+        const { beforeId, afterId } = neighborsAfterDrag(rowIds, String(e.active.id), String(e.over.id));
+        onReorderRow(String(e.active.id), beforeId, afterId);
+      }}
+    >
+      <SortableContext items={rowIds} strategy={rectSortingStrategy}>
+        {rows.map((row) => (
+          <SortableGalleryCard key={row.id} id={row.id} onClick={() => onOpenRow?.(row)}>
+            {card(row)}
+          </SortableGalleryCard>
+        ))}
+      </SortableContext>
+    </DndContext>
+  ) : (
+    rows.map((row) => (
+      <button
+        key={row.id}
+        onClick={() => onOpenRow?.(row)}
+        className="min-h-20 rounded border border-zinc-200 bg-zinc-50 p-3 text-left hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
+      >
+        {card(row)}
+      </button>
+    ))
+  );
+
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-      {rows.map((row) => (
-        <button
-          key={row.id}
-          onClick={() => onOpenRow?.(row)}
-          className="min-h-20 rounded border border-zinc-200 bg-zinc-50 p-3 text-left hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
-        >
-          <div className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
-            {rowTitle(properties, row) || 'Untitled'}
-          </div>
-        </button>
-      ))}
+      {grid}
       <button
         onClick={createRow}
         className="flex min-h-20 items-center justify-center rounded border border-dashed border-zinc-300 text-sm text-zinc-400 hover:border-zinc-400 dark:border-zinc-700"
       >
         + New
       </button>
+    </div>
+  );
+}
+
+/** One row per entry, no column rules — just the title plus a few small properties on the right (§21B.1). */
+function SortableListRow({ id, onClick, children }: { id: string; onClick: () => void; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      className="group flex w-full items-center hover:bg-zinc-50 dark:hover:bg-zinc-900"
+    >
+      <span {...attributes} {...listeners} className="cursor-grab px-1 text-xs text-zinc-300 opacity-0 hover:text-zinc-500 group-hover:opacity-100" title="Drag to reorder">
+        ⠿
+      </span>
+      <button onClick={onClick} className="flex w-full items-center justify-between px-1 py-2 text-left">
+        {children}
+      </button>
+    </div>
+  );
+}
+
+/** One row per entry, no column rules — just the title plus a few small properties on the right (§21B.1). */
+export function ListView({
+  properties,
+  rows,
+  createRow,
+  onOpenRow,
+  onReorderRow,
+}: {
+  properties: DatabaseProperty[];
+  rows: DatabaseRow[];
+  createRow: () => void;
+  onOpenRow?: (row: DatabaseRow) => void;
+  onReorderRow?: (id: string, beforeId: string | null, afterId: string | null) => void;
+}) {
+  const title = titleProperty(properties);
+  const rest = properties.filter((p) => p.id !== title?.id).slice(0, 3);
+  const dragSensors = useDragSensors();
+  const rowIds = rows.map((r) => r.id);
+
+  const rowContent = (row: DatabaseRow) => (
+    <>
+      <span className="truncate font-medium text-zinc-800 dark:text-zinc-100">{rowTitle(properties, row) || 'Untitled'}</span>
+      <span className="flex shrink-0 items-center gap-2 text-xs text-zinc-400">
+        {rest.map((p) => (
+          <span key={p.id}>{PropertyTypeRegistry.get(p.type)?.toPlainText(cellValue(row, p))}</span>
+        ))}
+      </span>
+    </>
+  );
+
+  const list = onReorderRow ? (
+    <DndContext
+      sensors={dragSensors}
+      onDragEnd={(e) => {
+        if (!e.over || e.active.id === e.over.id) return;
+        const { beforeId, afterId } = neighborsAfterDrag(rowIds, String(e.active.id), String(e.over.id));
+        onReorderRow(String(e.active.id), beforeId, afterId);
+      }}
+    >
+      <SortableContext items={rowIds} strategy={verticalListSortingStrategy}>
+        {rows.map((row) => (
+          <SortableListRow key={row.id} id={row.id} onClick={() => onOpenRow?.(row)}>
+            {rowContent(row)}
+          </SortableListRow>
+        ))}
+      </SortableContext>
+    </DndContext>
+  ) : (
+    rows.map((row) => (
+      <button
+        key={row.id}
+        onClick={() => onOpenRow?.(row)}
+        className="flex w-full items-center justify-between px-2 py-2 text-left hover:bg-zinc-50 dark:hover:bg-zinc-900"
+      >
+        {rowContent(row)}
+      </button>
+    ))
+  );
+
+  return (
+    <div className="divide-y divide-zinc-100 rounded border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+      {list}
+      {rows.length === 0 && <p className="px-2 py-6 text-center text-zinc-400 dark:text-zinc-500">No rows yet.</p>}
+      <button onClick={createRow} className="block w-full px-2 py-2 text-left text-sm text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200">
+        + New
+      </button>
+    </div>
+  );
+}
+
+const ZOOM_PX_PER_DAY: Record<string, number> = { day: 32, week: 12, month: 4, quarter: 1.5, year: 0.4 };
+
+function parseDateOnly(value: unknown): Date | null {
+  if (typeof value !== 'string') return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function daysBetween(a: Date, b: Date): number {
+  return Math.round((b.getTime() - a.getTime()) / 86_400_000);
+}
+
+/**
+ * Gantt-style timeline (§21B.2) — one horizontal bar per row, positioned by
+ * `startProperty`/`endProperty`. No dependency lines between bars (explicitly
+ * out of scope, §21B.2) and no bar-to-bar order, so bars aren't draggable
+ * into a list order — only along the time axis (wired in a later pass).
+ */
+export function TimelineView({
+  properties,
+  rows,
+  startProperty,
+  endProperty,
+  zoom,
+  showTable,
+  onOpenRow,
+}: {
+  properties: DatabaseProperty[];
+  rows: DatabaseRow[];
+  startProperty: DatabaseProperty;
+  endProperty?: DatabaseProperty;
+  zoom: 'day' | 'week' | 'month' | 'quarter' | 'year';
+  showTable: boolean;
+  onOpenRow?: (row: DatabaseRow) => void;
+}) {
+  const pxPerDay = ZOOM_PX_PER_DAY[zoom] ?? ZOOM_PX_PER_DAY.week;
+
+  const bars = rows
+    .map((row) => {
+      const start = parseDateOnly(row.values?.[startProperty.id]);
+      if (!start) return null;
+      const end = endProperty ? parseDateOnly(row.values?.[endProperty.id]) : null;
+      return { row, start, end: end ?? start };
+    })
+    .filter((b): b is { row: DatabaseRow; start: Date; end: Date } => b !== null);
+
+  if (bars.length === 0) {
+    return <p className="text-zinc-400 dark:text-zinc-500">No rows with a {startProperty.name} value yet.</p>;
+  }
+
+  const rangeStart = new Date(Math.min(...bars.map((b) => b.start.getTime())));
+
+  return (
+    <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
+      <div className="flex">
+        {showTable && (
+          <div className="w-40 shrink-0 border-r border-zinc-200 dark:border-zinc-800">
+            {bars.map(({ row }) => (
+              <button
+                key={row.id}
+                onClick={() => onOpenRow?.(row)}
+                className="block w-full truncate px-2 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                style={{ height: 40 }}
+              >
+                {rowTitle(properties, row) || 'Untitled'}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="relative flex-1">
+          {bars.map(({ row, start, end }) => {
+            const left = daysBetween(rangeStart, start) * pxPerDay;
+            const durationDays = Math.max(1, daysBetween(start, end) + 1);
+            const width = durationDays * pxPerDay;
+            return (
+              <div key={row.id} className="relative border-b border-zinc-100 dark:border-zinc-800" style={{ height: 40 }}>
+                <button
+                  onClick={() => onOpenRow?.(row)}
+                  title={rowTitle(properties, row)}
+                  className="absolute top-1.5 h-7 truncate rounded bg-zinc-700 px-2 text-left text-xs text-white hover:bg-zinc-600 dark:bg-zinc-300 dark:text-zinc-900"
+                  style={{ left, width: Math.max(width, 24) }}
+                >
+                  {rowTitle(properties, row) || 'Untitled'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
