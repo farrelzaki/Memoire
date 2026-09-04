@@ -1,8 +1,17 @@
 'use client';
 
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import type { CalculationId, DatabaseProperty, DatabaseQueryGroup, DatabaseRow, PropertyType } from '@/lib/types';
-import { PropertyTypeRegistry } from './property-type-registry';
+import { api } from '@/lib/api';
+import type {
+  CalculationId,
+  DatabaseProperty,
+  DatabaseQueryGroup,
+  DatabaseRow,
+  PropertyType,
+  RelationConfig,
+} from '@/lib/types';
+import { cellValue, PropertyTypeRegistry } from './property-type-registry';
 import type { Sort } from './database.lib';
 
 type CommitCell = (row: DatabaseRow, property: DatabaseProperty, value: unknown) => void;
@@ -46,13 +55,34 @@ export function Cell({
   property,
   value,
   onCommit,
+  rowId,
 }: {
   property: DatabaseProperty;
   value: unknown;
   onCommit: (value: unknown) => void;
+  /** Only needed for `relation` — which row this cell belongs to, to link/unlink against (§23A). */
+  rowId?: string;
 }) {
   const inputCls = 'w-full bg-transparent px-2 py-1 text-sm outline-none dark:text-zinc-100';
   const readOnlyCls = 'px-2 py-1 text-sm text-zinc-400 dark:text-zinc-500';
+
+  // Materialized server-side (§24A.5, §24B.3) — read-only here, with an
+  // #ERROR marker for a formula that failed to evaluate on this row.
+  if (property.type === 'formula' || property.type === 'rollup') {
+    if (value && typeof value === 'object' && 'error' in (value as Record<string, unknown>)) {
+      return (
+        <span className={`${readOnlyCls} text-red-500`} title={String((value as { error: unknown }).error)}>
+          #ERROR
+        </span>
+      );
+    }
+    const def = PropertyTypeRegistry.get(property.type);
+    return <span className={readOnlyCls}>{def ? def.toPlainText(value) : ''}</span>;
+  }
+
+  if (property.type === 'relation') {
+    return <RelationCell property={property} value={value} rowId={rowId} />;
+  }
 
   if (!PropertyTypeRegistry.get(property.type)?.editable) {
     // created_time, last_edited_time, unique_id (§20A.4) — server-derived, never editable here.
@@ -150,16 +180,152 @@ export function Cell({
   }
 }
 
+/**
+ * A relation's linked-row chips plus a picker (§23A) — self-contained
+ * (its own query for the target database, its own link/unlink mutations)
+ * so it drops into `Cell` without threading row-mutation plumbing through
+ * every caller, mirroring `link-to-page-node.tsx`'s search-picker pattern.
+ */
+function RelationCell({
+  property,
+  value,
+  rowId,
+}: {
+  property: DatabaseProperty;
+  value: unknown;
+  rowId?: string;
+}) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const config = property.config as RelationConfig | null;
+  const linkedIds = Array.isArray(value) ? (value as string[]) : [];
+
+  const { data: targetAgg } = useQuery({
+    queryKey: ['database', config?.targetDatabaseId],
+    queryFn: () => api.getDatabaseById(config!.targetDatabaseId),
+    enabled: open && !!config?.targetDatabaseId,
+  });
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['database-query'] });
+    queryClient.invalidateQueries({ queryKey: ['database'] });
+  };
+
+  const titleOf = (id: string) => {
+    if (!targetAgg) return id;
+    const titleProp = targetAgg.properties.find((p) => p.type === 'title') ?? targetAgg.properties[0];
+    const row = targetAgg.rows.find((r) => r.id === id);
+    const t = titleProp && row ? row.values?.[titleProp.id] : undefined;
+    return typeof t === 'string' && t.length > 0 ? t : 'Untitled';
+  };
+
+  const link = (toRowId: string) => {
+    if (!rowId) return;
+    api.addRelation(rowId, property.id, toRowId).then(invalidate);
+    setQuery('');
+    setOpen(false);
+  };
+
+  const unlink = (toRowId: string) => {
+    if (!rowId) return;
+    api.removeRelation(rowId, property.id, toRowId).then(invalidate);
+  };
+
+  if (!config) return null;
+
+  const titleProp = targetAgg?.properties.find((p) => p.type === 'title') ?? targetAgg?.properties[0];
+  const matches = (targetAgg?.rows ?? [])
+    .filter((r) => !linkedIds.includes(r.id))
+    .filter((r) => {
+      const t = titleProp ? r.values?.[titleProp.id] : undefined;
+      return typeof t !== 'string' || t.toLowerCase().includes(query.toLowerCase());
+    })
+    .slice(0, 8);
+
+  return (
+    <div className="relative px-1 py-1">
+      <div className="flex flex-wrap items-center gap-1">
+        {linkedIds.map((id) => (
+          <span
+            key={id}
+            className="flex items-center gap-1 rounded bg-zinc-100 px-1.5 py-0.5 text-xs dark:bg-zinc-800"
+          >
+            {titleOf(id)}
+            <button onClick={() => unlink(id)} className="text-zinc-400 hover:text-red-500">
+              ×
+            </button>
+          </span>
+        ))}
+        {(config.allowMultiple || linkedIds.length === 0) && (
+          <button
+            onClick={() => setOpen((v) => !v)}
+            className="text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+          >
+            +
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="absolute left-0 top-6 z-50 w-56 rounded border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search rows…"
+            className="mb-1 w-full bg-transparent text-sm outline-none dark:text-zinc-100"
+          />
+          <div className="max-h-40 overflow-y-auto">
+            {matches.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => link(r.id)}
+                className="block w-full rounded px-1.5 py-1 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 dark:text-zinc-100"
+              >
+                {titleProp && typeof r.values?.[titleProp.id] === 'string' ? (r.values[titleProp.id] as string) : 'Untitled'}
+              </button>
+            ))}
+            {matches.length === 0 && <p className="px-1.5 py-1 text-xs text-zinc-400">No matching rows.</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AddColumnForm({
+  properties = [],
   onAdd,
   onCancel,
 }: {
+  /** This database's existing properties — only needed for the `rollup` config sub-form (relation/target pickers). */
+  properties?: DatabaseProperty[];
   onAdd: (input: { name: string; type: PropertyType; config?: Record<string, unknown> }) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState('');
   const [type, setType] = useState<PropertyType>('text');
   const [options, setOptions] = useState('');
+  const [targetDatabaseId, setTargetDatabaseId] = useState('');
+  const [relationPropertyId, setRelationPropertyId] = useState('');
+  const [targetPropertyId, setTargetPropertyId] = useState('');
+  const [rollupFunction, setRollupFunction] = useState<string>('sum');
+  const [formulaSource, setFormulaSource] = useState('');
+
+  const { data: databases = [] } = useQuery({
+    queryKey: ['databases'],
+    queryFn: api.listDatabases,
+    enabled: type === 'relation',
+  });
+
+  const relationProperties = properties.filter((p) => p.type === 'relation');
+  const selectedRelation = properties.find((p) => p.id === relationPropertyId);
+  const relationTargetId = (selectedRelation?.config as RelationConfig | null)?.targetDatabaseId;
+  const { data: relationTargetAgg } = useQuery({
+    queryKey: ['database', relationTargetId],
+    queryFn: () => api.getDatabaseById(relationTargetId!),
+    enabled: type === 'rollup' && !!relationTargetId,
+  });
 
   const submit = () => {
     if (!name.trim()) return;
@@ -174,6 +340,15 @@ export function AddColumnForm({
       config = {
         options: defaultNames.map((n, i) => ({ ...newOption(n, i), group: groups[i % groups.length] })),
       };
+    } else if (type === 'relation') {
+      if (!targetDatabaseId) return;
+      config = { targetDatabaseId, allowMultiple: true, inversePropertyId: null };
+    } else if (type === 'rollup') {
+      if (!relationPropertyId || !targetPropertyId) return;
+      config = { relationPropertyId, targetPropertyId, function: rollupFunction };
+    } else if (type === 'formula') {
+      if (!formulaSource.trim()) return;
+      config = { source: formulaSource };
     }
     onAdd({ name: name.trim(), type, config });
   };
@@ -210,6 +385,9 @@ export function AddColumnForm({
             'created_time',
             'last_edited_time',
             'unique_id',
+            'relation',
+            'rollup',
+            'formula',
           ] as const
         ).map((t) => (
           <option key={t} value={t}>
@@ -217,6 +395,74 @@ export function AddColumnForm({
           </option>
         ))}
       </select>
+      {type === 'relation' && (
+        <select
+          value={targetDatabaseId}
+          onChange={(e) => setTargetDatabaseId(e.target.value)}
+          className="rounded border border-zinc-200 bg-transparent px-2 py-1 text-sm dark:border-zinc-700 dark:text-zinc-100"
+        >
+          <option value="">Link to database…</option>
+          {databases.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      )}
+      {type === 'rollup' && (
+        <>
+          <select
+            value={relationPropertyId}
+            onChange={(e) => {
+              setRelationPropertyId(e.target.value);
+              setTargetPropertyId('');
+            }}
+            className="rounded border border-zinc-200 bg-transparent px-2 py-1 text-sm dark:border-zinc-700 dark:text-zinc-100"
+          >
+            <option value="">Via relation…</option>
+            {relationProperties.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          {relationPropertyId && (
+            <select
+              value={targetPropertyId}
+              onChange={(e) => setTargetPropertyId(e.target.value)}
+              className="rounded border border-zinc-200 bg-transparent px-2 py-1 text-sm dark:border-zinc-700 dark:text-zinc-100"
+            >
+              <option value="">Property…</option>
+              {(relationTargetAgg?.properties ?? [])
+                .filter((p) => p.type !== 'rollup') // rollup-of-rollup rejected server-side too (1-hop limit, §24A.5)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+            </select>
+          )}
+          <select
+            value={rollupFunction}
+            onChange={(e) => setRollupFunction(e.target.value)}
+            className="rounded border border-zinc-200 bg-transparent px-2 py-1 text-sm dark:border-zinc-700 dark:text-zinc-100"
+          >
+            {ROLLUP_FUNCTIONS.map((fn) => (
+              <option key={fn} value={fn}>
+                {ROLLUP_FUNCTION_LABELS[fn] ?? fn}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
+      {type === 'formula' && (
+        <input
+          value={formulaSource}
+          onChange={(e) => setFormulaSource(e.target.value)}
+          placeholder='prop("Price") * prop("Qty")'
+          className="w-56 rounded border border-zinc-200 bg-transparent px-2 py-1 font-mono text-xs outline-none dark:border-zinc-700 dark:text-zinc-100"
+        />
+      )}
       {(type === 'select' || type === 'multi_select' || type === 'status') && (
         <input
           value={options}
@@ -239,6 +485,55 @@ export function AddColumnForm({
 }
 
 const ROW_HEIGHT_CLASS: Record<string, string> = { short: 'py-0', medium: 'py-1.5', tall: 'py-3' };
+
+/** `CalculationId` + `show_original` (rollup-only, §24B.2) — the same 20 functions as column calculations, plus one. */
+const ROLLUP_FUNCTIONS = [
+  'show_original',
+  'count_all',
+  'count_values',
+  'count_unique',
+  'count_empty',
+  'count_not_empty',
+  'percent_empty',
+  'percent_not_empty',
+  'sum',
+  'average',
+  'median',
+  'min',
+  'max',
+  'range',
+  'earliest_date',
+  'latest_date',
+  'date_range',
+  'checked',
+  'unchecked',
+  'percent_checked',
+  'percent_unchecked',
+] as const;
+
+const ROLLUP_FUNCTION_LABELS: Record<string, string> = {
+  show_original: 'Show original',
+  count_all: 'Count all',
+  count_values: 'Count values',
+  count_unique: 'Count unique',
+  count_empty: 'Count empty',
+  count_not_empty: 'Count not empty',
+  percent_empty: '% empty',
+  percent_not_empty: '% not empty',
+  sum: 'Sum',
+  average: 'Average',
+  median: 'Median',
+  min: 'Min',
+  max: 'Max',
+  range: 'Range',
+  earliest_date: 'Earliest date',
+  latest_date: 'Latest date',
+  date_range: 'Date range',
+  checked: 'Checked',
+  unchecked: 'Unchecked',
+  percent_checked: '% checked',
+  percent_unchecked: '% unchecked',
+};
 
 const CALCULATION_LABELS: Record<CalculationId, string> = {
   count_all: 'Count all',
@@ -347,7 +642,12 @@ export function TableView({
                     key={p.id}
                     className={`border-r border-zinc-100 px-1 dark:border-zinc-800 ${cellPadY} ${wrapCells ? 'whitespace-normal break-words' : 'whitespace-nowrap'}`}
                   >
-                    <Cell property={p} value={row.values?.[p.id]} onCommit={(value) => commitCell(row, p, value)} />
+                    <Cell
+                      property={p}
+                      value={cellValue(row, p)}
+                      onCommit={(value) => commitCell(row, p, value)}
+                      rowId={row.id}
+                    />
                   </td>
                 ))}
                 <td className="px-2 py-1 text-right">
@@ -404,6 +704,7 @@ export function TableView({
       <div className="mt-2">
         {addingColumn ? (
           <AddColumnForm
+            properties={properties}
             onAdd={(input) => {
               createProperty(input);
               setAddingColumn(false);

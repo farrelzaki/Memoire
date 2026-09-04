@@ -46,4 +46,63 @@ describe('createPropertySchema', () => {
     const result = createPropertySchema.safeParse({ name: 'Done', type: 'checkbox', config: { extra: true } });
     expect(result.success).toBe(false);
   });
+
+  it('accepts a relation property and defaults allowMultiple/inversePropertyId', () => {
+    const result = createPropertySchema.safeParse({
+      name: 'Tasks',
+      type: 'relation',
+      config: { targetDatabaseId: '11111111-1111-1111-1111-111111111111' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.config).toEqual({
+        targetDatabaseId: '11111111-1111-1111-1111-111111111111',
+        allowMultiple: true,
+        inversePropertyId: null,
+      });
+    }
+  });
+
+  it('accepts a rollup property with a valid function', () => {
+    const result = createPropertySchema.safeParse({
+      name: 'Total hours',
+      type: 'rollup',
+      config: {
+        relationPropertyId: '11111111-1111-1111-1111-111111111111',
+        targetPropertyId: '22222222-2222-2222-2222-222222222222',
+        function: 'sum',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a rollup property with an unknown function', () => {
+    const result = createPropertySchema.safeParse({
+      name: 'Total hours',
+      type: 'rollup',
+      config: {
+        relationPropertyId: '11111111-1111-1111-1111-111111111111',
+        targetPropertyId: '22222222-2222-2222-2222-222222222222',
+        function: 'not_a_function',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a formula property with just a source string — ast/volatile/returnType default', () => {
+    const result = createPropertySchema.safeParse({
+      name: 'Total',
+      type: 'formula',
+      config: { source: 'prop("Price") * prop("Qty")' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.config).toMatchObject({ source: 'prop("Price") * prop("Qty")', volatile: false, returnType: 'unknown' });
+    }
+  });
+
+  it('rejects a formula property with no source', () => {
+    const result = createPropertySchema.safeParse({ name: 'Total', type: 'formula', config: {} });
+    expect(result.success).toBe(false);
+  });
 });

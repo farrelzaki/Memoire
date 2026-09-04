@@ -49,12 +49,13 @@ DILUAR     mention @orang, komentar, suggested edit   -- melibatkan pengguna lai
 
 ```text
 ADA        title, text, number, select, multi-select, status (dengan grup todo/doing/done),
-           checkbox, date, url, email, phone, created time, last edited time, unique ID
+           checkbox, date, url, email, phone, created time, last edited time, unique ID,
+           relation (satu & dua arah, §23A), rollup (§24B), formula (§24A)
 SEBAGIAN   files       -- properti & filter is_empty/is_not_empty ada, kolom tabel baca-saja,
                           belum ada UI unggah (beda dari blok file/video/audio/pdf editor, §12B.2)
            number      -- format persen/mata uang/bar/ring divalidasi skema, belum ada UI pengaturan
-BELUM      files & media unggah lewat sel database, rentang tanggal + waktu, reminder pada tanggal,
-           relation (satu & dua arah), rollup, formula
+           formula     -- editor properti masih textarea polos, tanpa live preview/syntax highlight
+BELUM      files & media unggah lewat sel database, rentang tanggal + waktu, reminder pada tanggal
 DILUAR     person, created by, last edited by   -- melibatkan pengguna lain (§56.2)
 ```
 

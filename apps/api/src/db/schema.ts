@@ -182,6 +182,11 @@ export const databaseRows = pgTable(
     // Mirrors the row's page's isArchived when it has one (§20D.5, one
     // transaction both ways) — a soft-deleted row never appears in a query.
     isArchived: boolean('is_archived').notNull().default(false),
+    // Formula & rollup results (§24A, §24B) — written ONLY by the API's
+    // recompute pipeline, never by the client (§14, §57). `values` is input;
+    // this is everything derived from it.
+    computed: jsonb('computed').$type<Record<string, unknown>>().notNull().default({}),
+    computedAt: timestamp('computed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -197,6 +202,37 @@ export const databaseRows = pgTable(
     // for dynamic property-id keys). Deliberate limit, not an oversight.
     valuesGinIdx: index('database_rows_values_gin').using('gin', sql`${table.values} jsonb_path_ops`),
     databasePositionIdx: index('database_rows_db_pos').on(table.databaseId, table.position),
+  }),
+);
+
+// database_relation_links (§23A.1) — a table, not a values[] array: relation
+// is filtered, sorted, and related, so it earns real rows (§57 Decision 3),
+// not the JSONB exception. `values` never stores relation; the API
+// projects it at read time.
+export const databaseRelationLinks = pgTable(
+  'database_relation_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    propertyId: uuid('property_id')
+      .notNull()
+      .references(() => databaseProperties.id, { onDelete: 'cascade' }),
+    fromRowId: uuid('from_row_id')
+      .notNull()
+      .references(() => databaseRows.id, { onDelete: 'cascade' }),
+    toRowId: uuid('to_row_id')
+      .notNull()
+      .references(() => databaseRows.id, { onDelete: 'cascade' }),
+  },
+  (table) => ({
+    uniqueLink: uniqueIndex('database_relation_links_uniq').on(
+      table.propertyId,
+      table.fromRowId,
+      table.toRowId,
+    ),
+    // "Baris mana saja yang menunjuk ke baris ini" — every rollup
+    // recompute and dependent-row lookup runs this exact query (§23A.1, §24B.4).
+    toRowIdx: index('database_relation_links_to_row_idx').on(table.toRowId, table.propertyId),
+    fromRowIdx: index('database_relation_links_from_row_idx').on(table.fromRowId, table.propertyId),
   }),
 );
 
@@ -340,6 +376,9 @@ export type NewDatabase = typeof databases.$inferInsert;
 export type DatabaseProperty = typeof databaseProperties.$inferSelect;
 export type DatabaseRow = typeof databaseRows.$inferSelect;
 export type DatabaseView = typeof databaseViews.$inferSelect;
+
+export type DatabaseRelationLink = typeof databaseRelationLinks.$inferSelect;
+export type NewDatabaseRelationLink = typeof databaseRelationLinks.$inferInsert;
 
 export type Attachment = typeof attachments.$inferSelect;
 export type Template = typeof templates.$inferSelect;

@@ -8,6 +8,10 @@ describe('createPropertySchema', () => {
   });
 
   it('rejects an unknown property type', () => {
+    expect(() => createPropertySchema.parse({ name: 'X', type: 'not_a_real_type' })).toThrow();
+  });
+
+  it('rejects a relation property with no targetDatabaseId', () => {
     expect(() => createPropertySchema.parse({ name: 'X', type: 'relation' })).toThrow();
   });
 

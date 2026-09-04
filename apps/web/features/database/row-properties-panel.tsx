@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import type { DatabaseProperty } from '@/lib/types';
 import { Cell } from './database-views';
 import { mergeRowValues } from './database.lib';
+import { cellValue } from './property-type-registry';
 
 /**
  * The panel above a row page's content (§20D.1) — every property except the
@@ -50,7 +51,8 @@ export function RowPropertiesPanel({ pageId, databaseId }: { pageId: string; dat
           <div className="min-w-0 flex-1">
             <Cell
               property={property}
-              value={row.values?.[property.id]}
+              value={cellValue(row, property)}
+              rowId={row.id}
               onCommit={(value) => updateRow.mutate({ values: mergeRowValues(row, property.id, value) })}
             />
           </div>

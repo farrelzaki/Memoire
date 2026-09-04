@@ -1,6 +1,6 @@
 import { sql, type SQL } from 'drizzle-orm';
 import type { CalculationId, FilterGroup, FilterRule } from '@memoire/validation';
-import { databaseRows } from '../db/schema';
+import { databaseRelationLinks, databaseRows } from '../db/schema';
 
 export type QueryPropertyType =
   | 'title'
@@ -17,14 +17,38 @@ export type QueryPropertyType =
   | 'files'
   | 'created_time'
   | 'last_edited_time'
-  | 'unique_id';
+  | 'unique_id'
+  | 'relation'
+  | 'rollup'
+  | 'formula';
 
-export type PropertyMeta = { id: string; type: QueryPropertyType };
+/** What kind of scalar a `rollup`/`formula` property resolves to — read off `config.returnType`/the rollup function's output (§53), since one `rollup` might be numbers and another dates. Ignored for every other type. */
+export type QueryValueKind = 'number' | 'string' | 'boolean' | 'date' | 'unknown';
+
+export type PropertyMeta = { id: string; type: QueryPropertyType; valueKind?: QueryValueKind };
 
 const TEXT_TYPES = new Set<QueryPropertyType>(['title', 'text', 'url', 'email', 'phone']);
 const JSONB_ARRAY_TYPES = new Set<QueryPropertyType>(['multi_select', 'files']);
 const NUMERIC_TYPES = new Set<QueryPropertyType>(['number', 'unique_id']);
 const DATE_TYPES = new Set<QueryPropertyType>(['date', 'created_time', 'last_edited_time']);
+const COMPUTED_TYPES = new Set<QueryPropertyType>(['formula', 'rollup']);
+
+/** `formula`/`rollup` read from `database_rows.computed`, not `values` — their scalar-ness comes from `valueKind`, not the static per-type sets above (one rollup might be numbers, another dates). */
+function isNumeric(prop: PropertyMeta): boolean {
+  return NUMERIC_TYPES.has(prop.type) || (COMPUTED_TYPES.has(prop.type) && prop.valueKind === 'number');
+}
+function isDateValued(prop: PropertyMeta): boolean {
+  return DATE_TYPES.has(prop.type) || (COMPUTED_TYPES.has(prop.type) && prop.valueKind === 'date');
+}
+function isBooleanValued(prop: PropertyMeta): boolean {
+  return prop.type === 'checkbox' || (COMPUTED_TYPES.has(prop.type) && prop.valueKind === 'boolean');
+}
+function isTextValued(prop: PropertyMeta): boolean {
+  return (
+    TEXT_TYPES.has(prop.type) ||
+    (COMPUTED_TYPES.has(prop.type) && (prop.valueKind === undefined || prop.valueKind === 'string' || prop.valueKind === 'unknown'))
+  );
+}
 
 /**
  * `prop.id` is embedded as a raw SQL string literal, not a bind parameter —
@@ -44,6 +68,13 @@ function keyLiteral(id: string): SQL {
   return sql.raw(`'${id.replace(/'/g, "''")}'`);
 }
 
+/**
+ * `relation` has no scalar form here — it's filtered via an `EXISTS` against
+ * `database_relation_links` (see `buildRuleSql`) and is never sortable or
+ * aggregatable (§53). Callers that iterate properties generically must skip
+ * `relation` themselves; this function is never reached for it in a correct
+ * call path.
+ */
 export function extractionSql(prop: PropertyMeta): SQL {
   switch (prop.type) {
     case 'created_time':
@@ -61,8 +92,44 @@ export function extractionSql(prop: PropertyMeta): SQL {
     case 'multi_select':
     case 'files':
       return sql`(${databaseRows.values} -> ${keyLiteral(prop.id)})`;
+    // Already materialized (§24A, §24B) — read from `computed`, not `values`. A
+    // volatile formula is never in `computed` (§24A.3); it's excluded from
+    // filter/sort upstream, same as `relation`.
+    case 'rollup':
+    case 'formula':
+      switch (prop.valueKind) {
+        case 'number':
+          return sql`(${databaseRows.computed} ->> ${keyLiteral(prop.id)})::numeric`;
+        case 'boolean':
+          return sql`(${databaseRows.computed} ->> ${keyLiteral(prop.id)})::boolean`;
+        case 'date':
+          return sql`(${databaseRows.computed} ->> ${keyLiteral(prop.id)})::timestamptz`;
+        default:
+          return sql`(${databaseRows.computed} ->> ${keyLiteral(prop.id)})`;
+      }
     default:
       return sql`(${databaseRows.values} ->> ${keyLiteral(prop.id)})`;
+  }
+}
+
+/** `contains`/`does_not_contain`/`is_empty`/`is_not_empty` over `database_relation_links` — a relation has no scalar value to extract (§23A.1, §53). */
+function relationRuleSql(prop: PropertyMeta, operator: string, value: unknown): SQL | null {
+  const exists = (toRowId?: unknown) => {
+    const base = sql`exists (select 1 from ${databaseRelationLinks} where ${databaseRelationLinks.propertyId} = ${keyLiteral(prop.id)} and ${databaseRelationLinks.fromRowId} = ${databaseRows.id}`;
+    return toRowId === undefined ? sql`${base})` : sql`${base} and ${databaseRelationLinks.toRowId} = ${toRowId})`;
+  };
+
+  switch (operator) {
+    case 'is_empty':
+      return sql`not ${exists()}`;
+    case 'is_not_empty':
+      return exists();
+    case 'contains':
+      return typeof value === 'string' ? exists(value) : null;
+    case 'does_not_contain':
+      return typeof value === 'string' ? sql`not ${exists(value)}` : null;
+    default:
+      return null;
   }
 }
 
@@ -71,7 +138,7 @@ function emptySql(prop: PropertyMeta): SQL {
   if (JSONB_ARRAY_TYPES.has(prop.type)) {
     return sql`(${ext} is null or jsonb_array_length(${ext}) = 0)`;
   }
-  if (TEXT_TYPES.has(prop.type) || prop.type === 'select' || prop.type === 'status') {
+  if (isTextValued(prop) || prop.type === 'select' || prop.type === 'status') {
     return sql`(${ext} is null or ${ext} = '')`;
   }
   return sql`${ext} is null`;
@@ -175,17 +242,20 @@ function isFilterGroup(rule: FilterRule | FilterGroup): rule is FilterGroup {
 export function buildRuleSql(rule: FilterRule, propsById: Map<string, PropertyMeta>): SQL | null {
   const prop = propsById.get(rule.propertyId);
   if (!prop) return null;
-  const ext = extractionSql(prop);
   const { operator, value } = rule;
+
+  if (prop.type === 'relation') return relationRuleSql(prop, operator, value);
+
+  const ext = extractionSql(prop);
 
   if (operator === 'is_empty') return emptySql(prop);
   if (operator === 'is_not_empty') return sql`not ${emptySql(prop)}`;
 
-  if (DATE_TYPES.has(prop.type)) {
+  if (isDateValued(prop)) {
     return dateRuleSql(ext, operator, value);
   }
 
-  if (NUMERIC_TYPES.has(prop.type)) {
+  if (isNumeric(prop)) {
     if (typeof value !== 'number') return null;
     switch (operator) {
       case '=':
@@ -205,7 +275,7 @@ export function buildRuleSql(rule: FilterRule, propsById: Map<string, PropertyMe
     }
   }
 
-  if (prop.type === 'checkbox') {
+  if (isBooleanValued(prop)) {
     return operator === 'is' && typeof value === 'boolean' ? sql`${ext} = ${value}` : null;
   }
 
@@ -236,8 +306,8 @@ export function buildRuleSql(rule: FilterRule, propsById: Map<string, PropertyMe
     }
   }
 
-  // text-like: title, text, url, email, phone
-  if (TEXT_TYPES.has(prop.type) && typeof value === 'string') {
+  // text-like: title, text, url, email, phone, plus a formula/rollup with a string/unknown valueKind
+  if (isTextValued(prop) && typeof value === 'string') {
     switch (operator) {
       case 'is':
         return sql`${ext} = ${value}`;
@@ -288,7 +358,7 @@ export function buildSortSql(sorts: SortSpec[], propsById: Map<string, PropertyM
   const clauses: SQL[] = [];
   for (const sort of sorts) {
     const prop = propsById.get(sort.propertyId);
-    if (!prop) continue;
+    if (!prop || prop.type === 'relation') continue; // relation has no natural order (§53)
     const ext = extractionSql(prop);
     clauses.push(sort.direction === 'desc' ? sql`${ext} desc nulls last` : sql`${ext} asc nulls last`);
   }
@@ -327,7 +397,10 @@ export function buildKeysetSql(
   propsById: Map<string, PropertyMeta>,
   cursor: Cursor,
 ): SQL | undefined {
-  const known = sorts.filter((s) => propsById.has(s.propertyId));
+  const known = sorts.filter((s) => {
+    const prop = propsById.get(s.propertyId);
+    return prop !== undefined && prop.type !== 'relation';
+  });
   if (cursor.values.length !== known.length) return undefined;
 
   const branches: SQL[] = [];
@@ -381,7 +454,7 @@ export function buildCalculationSql(
 
   for (const { propertyId, calculationId } of requests) {
     const prop = propsById.get(propertyId);
-    if (!prop) continue;
+    if (!prop || prop.type === 'relation') continue; // no scalar to aggregate (§53)
     const ext = extractionSql(prop);
     const empty = emptySql(prop);
     const expr = calculationExpr(calculationId, prop, ext, empty);
@@ -411,7 +484,7 @@ function calculationExpr(id: CalculationId, prop: PropertyMeta, ext: SQL, empty:
       break;
   }
 
-  if (NUMERIC_TYPES.has(prop.type)) {
+  if (isNumeric(prop)) {
     switch (id) {
       case 'sum':
         return sql`sum(${ext})`;
@@ -430,7 +503,7 @@ function calculationExpr(id: CalculationId, prop: PropertyMeta, ext: SQL, empty:
     }
   }
 
-  if (DATE_TYPES.has(prop.type)) {
+  if (isDateValued(prop)) {
     switch (id) {
       case 'earliest_date':
         return sql`min(${ext})`;
@@ -443,7 +516,7 @@ function calculationExpr(id: CalculationId, prop: PropertyMeta, ext: SQL, empty:
     }
   }
 
-  if (prop.type === 'checkbox') {
+  if (isBooleanValued(prop)) {
     switch (id) {
       case 'checked':
         return sql`count(*) filter (where ${ext} is true)`;

@@ -1,14 +1,23 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import {
   migrateViewConfig,
   type CalculationId,
   type FilterGroup,
+  type FormulaConfig,
+  type RollupConfig,
   type ViewConfig,
   type ViewType,
 } from '@memoire/validation';
 import { DRIZZLE_DB, DrizzleDB } from '../db/drizzle.provider';
-import { DatabaseProperty, DatabaseRow, databaseProperties, databaseRows, databaseViews } from '../db/schema';
+import {
+  DatabaseProperty,
+  DatabaseRow,
+  databaseProperties,
+  databaseRelationLinks,
+  databaseRows,
+  databaseViews,
+} from '../db/schema';
 import {
   buildCalculationSql,
   buildFilterSql,
@@ -20,8 +29,22 @@ import {
   type CalculationRequest,
   type PropertyMeta,
   type QueryPropertyType,
+  type QueryValueKind,
   type SortSpec,
 } from './database-query.lib';
+
+/** Every rollup function except these two collapses to a plain number (§53) — mirrors `@memoire/formula`'s `aggregate()`, the JS-side implementation that actually produces these values. */
+export function rollupValueKind(fn: unknown): QueryValueKind {
+  if (fn === 'earliest_date' || fn === 'latest_date') return 'date';
+  if (fn === 'show_original') return 'unknown';
+  return 'number';
+}
+
+export function valueKindOf(property: DatabaseProperty): QueryValueKind | undefined {
+  if (property.type === 'formula') return (property.config as FormulaConfig | null)?.returnType;
+  if (property.type === 'rollup') return rollupValueKind((property.config as RollupConfig | null)?.function);
+  return undefined;
+}
 
 export type DatabaseQueryInput = {
   viewId?: string;
@@ -63,7 +86,7 @@ export class DatabaseQueryService {
       .orderBy(asc(databaseProperties.position));
 
     const propsById = new Map<string, PropertyMeta>(
-      properties.map((p) => [p.id, { id: p.id, type: p.type as QueryPropertyType }]),
+      properties.map((p) => [p.id, { id: p.id, type: p.type as QueryPropertyType, valueKind: valueKindOf(p) }]),
     );
 
     const view = await this.resolveView(databaseId, input.viewId);
@@ -111,15 +134,18 @@ export class DatabaseQueryService {
       .limit(limit + 1);
 
     const hasMore = pageRows.length > limit;
-    const rows = pageRows.slice(0, limit).map((row) => this.projectDerivedProperties(row, properties));
+    const pageOfRows = pageRows.slice(0, limit).map((row) => this.projectDerivedProperties(row, properties));
+    const rows = await this.projectRelations(pageOfRows, properties);
 
     let nextCursor: string | null = null;
     if (hasMore) {
       const last = pageRows[limit - 1];
+      const sortableSorts = sorts.filter((s) => {
+        const prop = propsById.get(s.propertyId);
+        return prop !== undefined && prop.type !== 'relation'; // relation has no natural order (§53)
+      });
       nextCursor = encodeCursor({
-        values: sorts
-          .filter((s) => propsById.has(s.propertyId))
-          .map((s) => this.cursorValueFor(last, propsById.get(s.propertyId)!)),
+        values: sortableSorts.map((s) => this.cursorValueFor(last, propsById.get(s.propertyId)!)),
         id: last.id,
       });
     }
@@ -190,14 +216,65 @@ export class DatabaseQueryService {
       else if (p.type === 'last_edited_time') derived[p.id] = row.updatedAt.toISOString();
       else if (p.type === 'unique_id') derived[p.id] = row.uniqueIdSeq;
     }
+    // formula/rollup need no synthesis — already materialized in `row.computed`
+    // by `FormulaRecomputeService` (§24A, §24B); the client reads them from there.
     if (Object.keys(derived).length === 0) return row;
     return { ...row, values: { ...row.values, ...derived } };
+  }
+
+  /**
+   * One batched query for every `relation` property × every row on this
+   * page — `values[relationPropertyId] = toRowId[]`, avoiding an N+1 over
+   * `database_relation_links` (§53). `values` never stores relation data at
+   * rest (§23A.1); this is a response-only projection, same as
+   * `projectDerivedProperties`.
+   */
+  private async projectRelations(rows: DatabaseRow[], properties: DatabaseProperty[]): Promise<DatabaseRow[]> {
+    const relationPropertyIds = properties.filter((p) => p.type === 'relation').map((p) => p.id);
+    if (relationPropertyIds.length === 0 || rows.length === 0) return rows;
+
+    const links = await this.db
+      .select({
+        propertyId: databaseRelationLinks.propertyId,
+        fromRowId: databaseRelationLinks.fromRowId,
+        toRowId: databaseRelationLinks.toRowId,
+      })
+      .from(databaseRelationLinks)
+      .where(
+        and(
+          inArray(
+            databaseRelationLinks.fromRowId,
+            rows.map((r) => r.id),
+          ),
+          inArray(databaseRelationLinks.propertyId, relationPropertyIds),
+        ),
+      );
+
+    const byRow = new Map<string, Record<string, string[]>>();
+    for (const link of links) {
+      const entry = byRow.get(link.fromRowId) ?? {};
+      (entry[link.propertyId] ??= []).push(link.toRowId);
+      byRow.set(link.fromRowId, entry);
+    }
+
+    return rows.map((row) => {
+      const relationValues = byRow.get(row.id);
+      return relationValues ? { ...row, values: { ...row.values, ...relationValues } } : row;
+    });
   }
 
   private cursorValueFor(row: DatabaseRow, prop: PropertyMeta): string | number | boolean | null {
     if (prop.type === 'created_time') return row.createdAt.toISOString();
     if (prop.type === 'last_edited_time') return row.updatedAt.toISOString();
     if (prop.type === 'unique_id') return row.uniqueIdSeq ?? null;
+
+    if (prop.type === 'formula' || prop.type === 'rollup') {
+      const value = row.computed?.[prop.id];
+      if (value === undefined || value === null) return null;
+      if (prop.valueKind === 'number') return typeof value === 'number' ? value : Number(value);
+      if (prop.valueKind === 'boolean') return typeof value === 'boolean' ? value : Boolean(value);
+      return typeof value === 'string' ? value : String(value);
+    }
 
     const value = row.values?.[prop.id];
     if (value === undefined || value === null) return null;

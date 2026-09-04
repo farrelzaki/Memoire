@@ -3,7 +3,6 @@ import { hexColor, nonEmptyString, uuid } from './primitives';
 
 /**
  * Property type catalogue and per-type config schemas (§20A.2, §20A.3).
- * `relation`/`rollup`/`formula` are Sprint 20 — not in `propertyTypes` yet.
  */
 export const propertyTypes = [
   'title',
@@ -21,6 +20,9 @@ export const propertyTypes = [
   'created_time',
   'last_edited_time',
   'unique_id',
+  'relation',
+  'rollup',
+  'formula',
 ] as const;
 
 export type PropertyType = (typeof propertyTypes)[number];
@@ -73,6 +75,64 @@ const uniqueIdConfigSchema = z
   })
   .strict();
 
+const relationConfigSchema = z
+  .object({
+    targetDatabaseId: uuid,
+    allowMultiple: z.boolean().default(true),
+    // Set only when this relation is two-way (§23A.2) — the paired property
+    // id on the target database. Service layer keeps both sides in sync.
+    inversePropertyId: uuid.nullable().default(null),
+  })
+  .strict();
+
+// Mirrors `calculationIds` in `view-config.ts` (§20B.1) plus `show_original`
+// (§24B.2, rollup-only). Duplicated here rather than imported to avoid a
+// circular import (`view-config.ts` imports `viewTypes` from this file).
+const rollupFunctions = [
+  'show_original',
+  'count_all',
+  'count_values',
+  'count_unique',
+  'count_empty',
+  'count_not_empty',
+  'percent_empty',
+  'percent_not_empty',
+  'sum',
+  'average',
+  'median',
+  'min',
+  'max',
+  'range',
+  'earliest_date',
+  'latest_date',
+  'date_range',
+  'checked',
+  'unchecked',
+  'percent_checked',
+  'percent_unchecked',
+] as const;
+
+const rollupConfigSchema = z
+  .object({
+    relationPropertyId: uuid,
+    targetPropertyId: uuid,
+    function: z.enum(rollupFunctions),
+  })
+  .strict();
+
+// `ast`/`volatile`/`returnType` are never client-authored — `DatabasesService`
+// parses `source` server-side (name→id resolution needs the database's live
+// property list, which this schema layer doesn't have) and fills them in
+// before this schema ever validates the config (§24A.1, §24A.3).
+const formulaConfigSchema = z
+  .object({
+    source: z.string().max(2000),
+    ast: z.unknown(),
+    volatile: z.boolean().default(false),
+    returnType: z.enum(['number', 'string', 'boolean', 'date', 'unknown']).default('unknown'),
+  })
+  .strict();
+
 /**
  * One schema per property type (§20A.3). Kept as a lookup rather than a
  * `z.discriminatedUnion` on `{id, name, type, config}` — every variant would
@@ -95,6 +155,9 @@ export const propertyConfigSchemas: Record<PropertyType, z.ZodType> = {
   created_time: emptyConfigSchema,
   last_edited_time: emptyConfigSchema,
   unique_id: uniqueIdConfigSchema,
+  relation: relationConfigSchema,
+  rollup: rollupConfigSchema,
+  formula: formulaConfigSchema,
 };
 
 function validateConfigForType(
@@ -162,6 +225,13 @@ export const moveViewSchema = z.object({
   direction: z.enum(['left', 'right']),
 });
 
+/** `POST /database-rows/:id/relations/:propertyId` body (§23A). */
+export const addRelationSchema = z.object({
+  toRowId: uuid,
+});
+
+export type AddRelationDto = z.infer<typeof addRelationSchema>;
+
 /**
  * `POST /databases` (§20C) — creates a database directly rather than as a
  * page's default content. `isInline: true` for a block embedded in a
@@ -174,6 +244,11 @@ export const createDatabaseSchema = z.object({
   name: z.string().trim().min(1).max(100).default('Untitled'),
   isInline: z.boolean().default(false),
 });
+
+export type RollupFunction = (typeof rollupFunctions)[number];
+export type RelationConfig = z.infer<typeof relationConfigSchema>;
+export type RollupConfig = z.infer<typeof rollupConfigSchema>;
+export type FormulaConfig = z.infer<typeof formulaConfigSchema>;
 
 export type CreatePropertyDto = z.infer<typeof createPropertySchema>;
 export type UpdatePropertyDto = z.infer<typeof updatePropertySchema>;

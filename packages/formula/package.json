@@ -1,0 +1,22 @@
+{
+  "name": "@memoire/formula",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Formula language for database properties (§24, §24A) — tokenizer, Pratt parser, evaluator, and the shared aggregate function library used by both column calculations and rollup (§20B, §24B.2). Used identically on the frontend (live preview) and backend (authoritative value).",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "date-fns": "^4.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}

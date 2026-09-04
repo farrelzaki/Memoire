@@ -18,6 +18,9 @@ const REGISTERED_KEYS: PropertyType[] = [
   'created_time',
   'last_edited_time',
   'unique_id',
+  'relation',
+  'rollup',
+  'formula',
 ];
 
 describe('PropertyTypeRegistry', () => {
@@ -33,6 +36,8 @@ describe('PropertyTypeRegistry', () => {
       expect(typeof def.toCsv).toBe('function');
       expect(typeof def.toPlainText).toBe('function');
       expect(def.filterOperators.length).toBeGreaterThan(0);
+      // relation has no natural aggregate — follow it to a rollup instead (§24B)
+      if (def.key === 'relation') continue;
       expect(def.calculations.length).toBeGreaterThan(0);
     }
   });
@@ -61,7 +66,9 @@ describe('PropertyTypeRegistry', () => {
 
   it('every other property type is editable', () => {
     for (const def of PropertyTypeRegistry.list()) {
-      if (['created_time', 'last_edited_time', 'unique_id'].includes(def.key)) continue;
+      // derived (server-computed, no cell editor): created_time/last_edited_time/unique_id (§20A.2),
+      // formula/rollup (§24A.5, §24B.3)
+      if (['created_time', 'last_edited_time', 'unique_id', 'formula', 'rollup'].includes(def.key)) continue;
       expect(def.editable).toBe(true);
     }
   });
@@ -81,6 +88,23 @@ describe('PropertyTypeRegistry', () => {
     expect(ops).toContain('contains');
     expect(ops).not.toContain('is');
   });
+
+  it('relation offers containment operators and no calculations', () => {
+    const def = PropertyTypeRegistry.get('relation')!;
+    expect(def.filterOperators).toContain('contains');
+    expect(def.calculations).toEqual([]);
+  });
+
+  it('rollup/formula offer the union of number/date/text filter operators and calculations', () => {
+    for (const key of ['rollup', 'formula'] as const) {
+      const def = PropertyTypeRegistry.get(key)!;
+      expect(def.filterOperators).toContain('>'); // numeric
+      expect(def.filterOperators).toContain('is_within'); // date
+      expect(def.filterOperators).toContain('contains'); // text
+      expect(def.calculations).toContain('sum');
+      expect(def.calculations).toContain('earliest_date');
+    }
+  });
 });
 
 describe('rowToPlainText', () => {
@@ -93,6 +117,7 @@ describe('rowToPlainText', () => {
       position: 0,
       uniqueIdSeq: null,
       isArchived: false,
+      computed: null,
       createdAt: '',
       updatedAt: '',
     };
@@ -102,5 +127,22 @@ describe('rowToPlainText', () => {
       { id: 'count', type: 'number' as const },
     ];
     expect(rowToPlainText(row, properties)).toBe('Alpha true 3');
+  });
+
+  it('reads formula/rollup cells from computed, not values', () => {
+    const row = {
+      id: 'r1',
+      databaseId: 'db',
+      pageId: null,
+      values: { total: 'stale-value-should-be-ignored' },
+      position: 0,
+      uniqueIdSeq: null,
+      isArchived: false,
+      computed: { total: 42 },
+      createdAt: '',
+      updatedAt: '',
+    };
+    const properties = [{ id: 'total', type: 'formula' as const }];
+    expect(rowToPlainText(row, properties)).toBe('42');
   });
 });

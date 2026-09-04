@@ -69,6 +69,22 @@ const dateConfig = z.object({
 });
 const filesConfig = z.object({ maxCount: z.number().optional() });
 const uniqueIdConfig = z.object({ prefix: z.string().optional(), nextValue: z.number() });
+const relationConfig = z.object({
+  targetDatabaseId: z.string(),
+  allowMultiple: z.boolean(),
+  inversePropertyId: z.string().nullable(),
+});
+const rollupConfig = z.object({
+  relationPropertyId: z.string(),
+  targetPropertyId: z.string(),
+  function: z.string(),
+});
+const formulaConfig = z.object({
+  source: z.string(),
+  ast: z.unknown(),
+  volatile: z.boolean(),
+  returnType: z.enum(['number', 'string', 'boolean', 'date', 'unknown']),
+});
 
 function textCompare(a: unknown, b: unknown): number {
   return String(a ?? '').localeCompare(String(b ?? ''));
@@ -121,6 +137,28 @@ const DATE_OPERATORS: FilterOperator[] = [
   'is_not_empty',
 ];
 const EMPTY_ONLY_OPERATORS: FilterOperator[] = ['is_empty', 'is_not_empty'];
+const RELATION_OPERATORS: FilterOperator[] = ['contains', 'does_not_contain', 'is_empty', 'is_not_empty'];
+
+// A rollup/formula's actual value kind (number/string/boolean/date) varies
+// per-instance (`config.returnType` / the rollup function's output) — the
+// registry's `filterOperators`/`calculations` can't branch on that per row,
+// so this offers the union of everything any kind could need. The server is
+// the real enforcement boundary, same as every other type here (§53).
+const COMPUTED_OPERATORS: FilterOperator[] = [
+  ...new Set([...TEXT_LIKE_OPERATORS, ...NUMBER_OPERATORS, ...DATE_OPERATORS]),
+];
+const COMPUTED_CALCULATIONS: CalculationId[] = [
+  ...new Set([...NUMBER_CALCULATIONS, ...DATE_CALCULATIONS, ...CHECKBOX_CALCULATIONS]),
+];
+
+function computedSortComparator(a: unknown, b: unknown): number {
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  if (typeof a === 'boolean' && typeof b === 'boolean') return Number(a) - Number(b);
+  const da = Date.parse(String(a ?? ''));
+  const db = Date.parse(String(b ?? ''));
+  if (!Number.isNaN(da) && !Number.isNaN(db)) return da - db;
+  return textCompare(a, b);
+}
 
 PropertyTypeRegistry.register({
   key: 'title',
@@ -317,13 +355,60 @@ PropertyTypeRegistry.register({
   toPlainText: (value) => (typeof value === 'number' ? String(value) : ''),
 });
 
+PropertyTypeRegistry.register({
+  key: 'relation',
+  label: 'Relation',
+  icon: '↔',
+  configSchema: relationConfig,
+  filterOperators: RELATION_OPERATORS,
+  calculations: [], // no natural aggregate — follow the relation to a rollup instead (§24B)
+  editable: true, // linking/unlinking rows, via a picker — not a text editor
+  sortComparator: (a, b) => (Array.isArray(a) ? a.length : 0) - (Array.isArray(b) ? b.length : 0),
+  toCsv: (value) => csvEscape(Array.isArray(value) ? value.join('; ') : ''),
+  toPlainText: (value) => (Array.isArray(value) ? value.join(' ') : ''),
+});
+
+PropertyTypeRegistry.register({
+  key: 'rollup',
+  label: 'Rollup',
+  icon: '∑',
+  configSchema: rollupConfig,
+  filterOperators: COMPUTED_OPERATORS,
+  calculations: COMPUTED_CALCULATIONS,
+  editable: false, // materialized server-side (§24B.3) — no cell editor
+  sortComparator: computedSortComparator,
+  toCsv: (value) => (value === null || value === undefined ? '' : csvEscape(String(value))),
+  toPlainText: (value) => (value === null || value === undefined ? '' : String(value)),
+});
+
+PropertyTypeRegistry.register({
+  key: 'formula',
+  label: 'Formula',
+  icon: 'ƒ',
+  configSchema: formulaConfig,
+  filterOperators: COMPUTED_OPERATORS,
+  calculations: COMPUTED_CALCULATIONS,
+  editable: false, // materialized server-side (§24A.5) — no cell editor
+  sortComparator: computedSortComparator,
+  toCsv: (value) => (value === null || value === undefined ? '' : csvEscape(String(value))),
+  toPlainText: (value) => (value === null || value === undefined ? '' : String(value)),
+});
+
+export const COMPUTED_TYPES = new Set<PropertyType>(['rollup', 'formula']);
+
+/** A cell's current value for one property — `formula`/`rollup` read `row.computed`, everything else reads `row.values` (§24A, §24B). The one place every reader (`Cell`, `rowToPlainText`, CSV export) should go through, so a value never gets read from the wrong side of the row. */
+export function cellValue(row: DatabaseRow, property: { id: string; type: PropertyType }): unknown {
+  const source = COMPUTED_TYPES.has(property.type) ? row.computed : row.values;
+  return source?.[property.id];
+}
+
 /** Extracts every cell's plain text for a row — search snippets (§25A). */
 export function rowToPlainText(
   row: DatabaseRow,
   properties: { id: string; type: PropertyType }[],
 ): string {
   return properties
-    .map((p) => PropertyTypeRegistry.get(p.type)?.toPlainText(row.values?.[p.id]) ?? '')
+    .map((p) => PropertyTypeRegistry.get(p.type)?.toPlainText(cellValue(row, p)) ?? '')
     .filter(Boolean)
     .join(' ');
 }

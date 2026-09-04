@@ -70,6 +70,8 @@ describe('Databases (e2e)', () => {
     deleteRow: vi.fn(async () => ({ id: rowFixture.id, deleted: true })),
     archiveRow: vi.fn(async () => ({ ...rowFixture, isArchived: true })),
     restoreRow: vi.fn(async () => ({ ...rowFixture, isArchived: false })),
+    addRelation: vi.fn(async () => ({ linked: true })),
+    removeRelation: vi.fn(async () => ({ linked: false })),
     findRowByPageId: vi.fn(async () => rowFixture),
     createView: vi.fn(async () => viewFixture),
     duplicateView: vi.fn(async () => ({ ...viewFixture, id: '55555555-5555-5555-5555-555555555555', name: 'Table (copy)' })),
@@ -113,7 +115,7 @@ describe('Databases (e2e)', () => {
   it('POST /api/databases/:id/properties rejects a bad type', async () => {
     const res = await request(app.getHttpServer())
       .post(`/api/databases/${databaseFixture.id}/properties`)
-      .send({ name: 'X', type: 'relation' })
+      .send({ name: 'X', type: 'not_a_real_type' })
       .expect(400);
     expect(res.body.success).toBe(false);
   });
@@ -214,6 +216,30 @@ describe('Databases (e2e)', () => {
       .post(`/api/database-rows/${rowFixture.id}/restore`)
       .expect(201);
     expect(res.body.isArchived).toBe(false);
+  });
+
+  it('POST /api/database-rows/:id/relations/:propertyId links a row (§23A)', async () => {
+    const toRowId = '11111111-2222-3333-4444-555555555555';
+    await request(app.getHttpServer())
+      .post(`/api/database-rows/${rowFixture.id}/relations/${propertyFixture.id}`)
+      .send({ toRowId })
+      .expect(201);
+    expect(databasesService.addRelation).toHaveBeenCalledWith(rowFixture.id, propertyFixture.id, toRowId);
+  });
+
+  it('POST /api/database-rows/:id/relations/:propertyId rejects a non-UUID toRowId', async () => {
+    await request(app.getHttpServer())
+      .post(`/api/database-rows/${rowFixture.id}/relations/${propertyFixture.id}`)
+      .send({ toRowId: 'not-a-uuid' })
+      .expect(400);
+  });
+
+  it('DELETE /api/database-rows/:id/relations/:propertyId/:toRowId unlinks a row', async () => {
+    const toRowId = '11111111-2222-3333-4444-555555555555';
+    await request(app.getHttpServer())
+      .delete(`/api/database-rows/${rowFixture.id}/relations/${propertyFixture.id}/${toRowId}`)
+      .expect(200);
+    expect(databasesService.removeRelation).toHaveBeenCalledWith(rowFixture.id, propertyFixture.id, toRowId);
   });
 
   it('POST /api/database-views/:id/duplicate copies a view', async () => {

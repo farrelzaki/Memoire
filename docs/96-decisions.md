@@ -369,3 +369,35 @@ representasi lengkap. Saat ini itu **berlaku secara kebetulan** — `commitCell`
 offline. Sprint 13 menambahkan tesnya.
 
 Lihat §14, §10B.5.
+
+---
+
+## ADR-21 — Relasi dua arah menulis dua baris link, bukan satu + arah
+
+**Konteks.** Relasi dua arah (§23A.2) berarti kedua sisi bisa menampilkan tautannya masing-masing.
+Ada dua cara menyimpannya: (a) satu baris `database_relation_links` per pasangan baris, dengan sisi
+pembacaan yang menukar `from_row_id`/`to_row_id` tergantung properti mana yang sedang dibaca, atau
+(b) dua baris — satu per arah, masing-masing berkunci `property_id`-nya sendiri.
+
+**Keputusan.** (b). `addRelation`/`removeRelation` menulis **dua** baris sekaligus dalam satu
+transaksi ketika `config.inversePropertyId` terisi: `{property_id: A, from_row_id: R, to_row_id: T}`
+dan `{property_id: B, from_row_id: T, to_row_id: R}`, dengan `A`/`B` saling menunjuk lewat
+`inversePropertyId`.
+
+**Alasan.** Setiap pembaca — rollup, proyeksi query, `recomputeRow` — sudah menyaring lewat
+`property_id = :ini AND from_row_id = :baris_ini` (indeks `(to_row_id, property_id)` dan
+constraint unik `(property_id, from_row_id, to_row_id)` keduanya dibangun di atas asumsi ini,
+§23A.1). Opsi (a) memaksa setiap query itu tahu apakah properti yang sedang dibaca adalah sisi
+"utama" atau "cermin", dan membalik kolom yang dibaca sesuai itu — sebuah flag arah yang harus
+merambat ke `database-query.lib.ts`, `FormulaRecomputeService`, dan `PropertyTypeRegistry`
+sekaligus. Menduplikasi baris link membuat setiap sisi symmetris dan tidak butuh kode khusus.
+
+**Konsekuensi.** Menghapus satu sisi (`removeRelation`, atau menonaktifkan dua-arah lewat
+`updateRelationProperty`) harus menghapus **kedua** baris eksplisit — tidak bisa mengandalkan
+`ON DELETE CASCADE` dari satu baris saja. Toggle satu-arah -> dua-arah memicu backfill: baris link
+lama yang sudah ada di sisi utama tidak otomatis dapat pasangannya (di luar cakupan Sprint 20 —
+`updateRelationProperty` hanya membuat properti pasangan, belum mem-backfill tautan yang sudah ada
+sebelum toggle; ditambahkan bila kebutuhan nyata muncul).
+
+Lihat §23A.1, §23A.2, `apps/api/src/databases/databases.service.ts` (`addRelation`,
+`removeRelation`, `updateRelationProperty`).

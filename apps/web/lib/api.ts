@@ -205,6 +205,16 @@ export const api = {
   archiveRow: (id: string) => request<DatabaseRow>(`/database-rows/${id}/archive`, { method: 'POST' }),
   restoreRow: (id: string) => request<DatabaseRow>(`/database-rows/${id}/restore`, { method: 'POST' }),
   getRowByPage: (pageId: string) => request<DatabaseRow | null>(`/database-rows/by-page/${pageId}`),
+  /** Links two rows via a relation property (§23A). */
+  addRelation: (rowId: string, propertyId: string, toRowId: string) =>
+    request<{ linked: boolean }>(`/database-rows/${rowId}/relations/${propertyId}`, {
+      method: 'POST',
+      body: JSON.stringify({ toRowId }),
+    }),
+  removeRelation: (rowId: string, propertyId: string, toRowId: string) =>
+    request<{ linked: boolean }>(`/database-rows/${rowId}/relations/${propertyId}/${toRowId}`, {
+      method: 'DELETE',
+    }),
   listTemplates: (databaseId: string) => request<RowTemplate[]>(`/databases/${databaseId}/templates`),
   createTemplate: (databaseId: string, body: { name: string; icon?: string | null; content: Record<string, unknown> }) =>
     request<RowTemplate>(`/databases/${databaseId}/templates`, {

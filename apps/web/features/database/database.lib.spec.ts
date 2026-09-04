@@ -11,6 +11,7 @@ function row(id: string, values: Record<string, unknown>): DatabaseRow {
     position: 0,
     uniqueIdSeq: null,
     isArchived: false,
+    computed: null,
     createdAt: '',
     updatedAt: '',
   };

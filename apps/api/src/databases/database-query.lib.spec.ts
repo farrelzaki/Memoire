@@ -24,9 +24,15 @@ const CHECKBOX: PropertyMeta = { id: 'p-check', type: 'checkbox' };
 const DATE: PropertyMeta = { id: 'p-date', type: 'date' };
 const CREATED: PropertyMeta = { id: 'p-created', type: 'created_time' };
 const UNIQUE: PropertyMeta = { id: 'p-uid', type: 'unique_id' };
+const RELATION: PropertyMeta = { id: 'p-rel', type: 'relation' };
+const ROLLUP_NUM: PropertyMeta = { id: 'p-rollup-num', type: 'rollup', valueKind: 'number' };
+const ROLLUP_DATE: PropertyMeta = { id: 'p-rollup-date', type: 'rollup', valueKind: 'date' };
+const FORMULA_TEXT: PropertyMeta = { id: 'p-formula-text', type: 'formula', valueKind: 'string' };
 
 const propsById = new Map(
-  [TITLE, NUMBER, SELECT, MULTI, CHECKBOX, DATE, CREATED, UNIQUE].map((p) => [p.id, p]),
+  [TITLE, NUMBER, SELECT, MULTI, CHECKBOX, DATE, CREATED, UNIQUE, RELATION, ROLLUP_NUM, ROLLUP_DATE, FORMULA_TEXT].map(
+    (p) => [p.id, p],
+  ),
 );
 
 describe('buildFilterSql', () => {
@@ -134,6 +140,68 @@ describe('buildFilterSql', () => {
     )!;
     expect(render(expr).sql).toContain('unique_id_seq');
   });
+
+  it('builds "contains" for a relation as an EXISTS against database_relation_links', () => {
+    const expr = buildFilterSql(
+      { conjunction: 'and', rules: [{ propertyId: RELATION.id, operator: 'contains', value: 'row-42' }] },
+      propsById,
+    )!;
+    const { sql, params } = render(expr);
+    expect(sql).toContain('exists');
+    expect(sql).toContain('database_relation_links');
+    expect(params).toContain('row-42');
+  });
+
+  it('negates the EXISTS for "does_not_contain" on a relation', () => {
+    const expr = buildFilterSql(
+      { conjunction: 'and', rules: [{ propertyId: RELATION.id, operator: 'does_not_contain', value: 'row-42' }] },
+      propsById,
+    )!;
+    expect(render(expr).sql).toMatch(/not.*exists/);
+  });
+
+  it('builds is_empty/is_not_empty for a relation without a value', () => {
+    const empty = buildFilterSql(
+      { conjunction: 'and', rules: [{ propertyId: RELATION.id, operator: 'is_empty' }] },
+      propsById,
+    )!;
+    const notEmpty = buildFilterSql(
+      { conjunction: 'and', rules: [{ propertyId: RELATION.id, operator: 'is_not_empty' }] },
+      propsById,
+    )!;
+    expect(render(empty).sql).toMatch(/not.*exists/);
+    expect(render(notEmpty).sql).toContain('exists');
+  });
+
+  it('reads a numeric rollup from computed, cast to numeric', () => {
+    const expr = buildFilterSql(
+      { conjunction: 'and', rules: [{ propertyId: ROLLUP_NUM.id, operator: '>', value: 5 }] },
+      propsById,
+    )!;
+    const { sql } = render(expr);
+    expect(sql).toContain('computed');
+    expect(sql).toContain('numeric');
+  });
+
+  it('reads a date rollup from computed with a relative date range', () => {
+    const expr = buildFilterSql(
+      { conjunction: 'and', rules: [{ propertyId: ROLLUP_DATE.id, operator: 'is_within', value: 'today' }] },
+      propsById,
+    )!;
+    const { sql } = render(expr);
+    expect(sql).toContain('computed');
+    expect(sql).toContain('timestamptz');
+  });
+
+  it('treats a formula with a string valueKind as text-searchable', () => {
+    const expr = buildFilterSql(
+      { conjunction: 'and', rules: [{ propertyId: FORMULA_TEXT.id, operator: 'contains', value: 'foo' }] },
+      propsById,
+    )!;
+    const { sql } = render(expr);
+    expect(sql).toContain('ilike');
+    expect(sql).toContain('computed');
+  });
 });
 
 describe('buildSortSql', () => {
@@ -153,6 +221,11 @@ describe('buildSortSql', () => {
     );
     expect(clauses).toHaveLength(2); // number desc + id tiebreak
     expect(render(clauses[0]).sql).toContain('desc');
+  });
+
+  it('skips a relation property — no natural order', () => {
+    const clauses = buildSortSql([{ propertyId: RELATION.id, direction: 'asc' }], propsById);
+    expect(clauses).toHaveLength(1); // id tiebreak only
   });
 });
 
@@ -188,6 +261,18 @@ describe('buildCalculationSql', () => {
     const [result] = buildCalculationSql([{ propertyId: DATE.id, calculationId: 'date_range' }], propsById);
     expect(render(result.expr).sql).toContain('extract');
   });
+
+  it('omits a relation property — no scalar to aggregate', () => {
+    const results = buildCalculationSql([{ propertyId: RELATION.id, calculationId: 'count_all' }], propsById);
+    expect(results).toHaveLength(0);
+  });
+
+  it('emits sum for a numeric-valued rollup, reading from computed', () => {
+    const [result] = buildCalculationSql([{ propertyId: ROLLUP_NUM.id, calculationId: 'sum' }], propsById);
+    const { sql } = render(result.expr);
+    expect(sql).toContain('sum(');
+    expect(sql).toContain('computed');
+  });
 });
 
 describe('cursor encode/decode', () => {
@@ -222,6 +307,16 @@ describe('buildKeysetSql', () => {
 
   it('falls back to the id-only branch when there are no sorts', () => {
     const expr = buildKeysetSql([], propsById, { values: [], id: 'row-1' })!;
+    const { sql, params } = render(expr);
+    expect(sql).toContain('id');
+    expect(params).toEqual(['row-1']);
+  });
+
+  it('ignores a relation in the sort list — falls back to id-only', () => {
+    const expr = buildKeysetSql([{ propertyId: RELATION.id, direction: 'asc' }], propsById, {
+      values: [],
+      id: 'row-1',
+    })!;
     const { sql, params } = render(expr);
     expect(sql).toContain('id');
     expect(params).toEqual(['row-1']);

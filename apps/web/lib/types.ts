@@ -101,7 +101,32 @@ export type PropertyType =
   | 'files'
   | 'created_time'
   | 'last_edited_time'
-  | 'unique_id';
+  | 'unique_id'
+  | 'relation'
+  | 'rollup'
+  | 'formula';
+
+/** Mirrors `@memoire/validation`'s `RelationConfig` (§23A). */
+export interface RelationConfig {
+  targetDatabaseId: string;
+  allowMultiple: boolean;
+  inversePropertyId: string | null;
+}
+
+/** Mirrors `@memoire/validation`'s `RollupConfig` (§24B.1). */
+export interface RollupConfig {
+  relationPropertyId: string;
+  targetPropertyId: string;
+  function: CalculationId | 'show_original';
+}
+
+/** Mirrors `@memoire/validation`'s `FormulaConfig` (§24A.1). `ast` is opaque here — only `@memoire/formula` (not yet shared with web) interprets it; the client only ever displays `source` and reads the materialized value from `row.computed`. */
+export interface FormulaConfig {
+  source: string;
+  ast: unknown;
+  volatile: boolean;
+  returnType: 'number' | 'string' | 'boolean' | 'date' | 'unknown';
+}
 
 /** Mirrors the backend `databases` row (§10.5, §20C.2). */
 export interface Database {
@@ -133,6 +158,9 @@ export interface DatabaseRow {
   position: number;
   uniqueIdSeq: number | null;
   isArchived: boolean;
+  // Formula/rollup results (§24A, §24B) — written only by the API, never the
+  // client (§14, §57). A formula/rollup cell reads from here, not `values`.
+  computed: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }

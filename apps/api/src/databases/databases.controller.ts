@@ -8,7 +8,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { DatabaseQueryRequestDto, databaseQueryRequestSchema } from '@memoire/validation';
+import { AddRelationDto, addRelationSchema, DatabaseQueryRequestDto, databaseQueryRequestSchema } from '@memoire/validation';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { DatabaseQueryService } from './database-query.service';
 import {
@@ -123,6 +123,24 @@ export class DatabasesController {
   @Post('database-rows/:id/restore')
   restoreRow(@Param('id', ParseUUIDPipe) id: string) {
     return this.databasesService.restoreRow(id);
+  }
+
+  @Post('database-rows/:id/relations/:propertyId')
+  addRelation(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body(new ZodValidationPipe(addRelationSchema)) body: AddRelationDto,
+  ) {
+    return this.databasesService.addRelation(id, propertyId, body.toRowId);
+  }
+
+  @Delete('database-rows/:id/relations/:propertyId/:toRowId')
+  removeRelation(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('propertyId', ParseUUIDPipe) propertyId: string,
+    @Param('toRowId', ParseUUIDPipe) toRowId: string,
+  ) {
+    return this.databasesService.removeRelation(id, propertyId, toRowId);
   }
 
   @Post('databases/:id/views')
